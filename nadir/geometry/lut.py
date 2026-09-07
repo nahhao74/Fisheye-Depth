@@ -9,21 +9,22 @@ from .rig import CameraRig
 
 @dataclass(frozen=True)
 class ProjectionLUT:
-    """Precomputed native-fisheye sampling coordinates for fixed rig hypotheses."""
+    """Precomputed native-fisheye sampling coordinates for fixed rig hypotheses.
 
-    uv_px: np.ndarray  # [C, N, K, 2]
-    uv_normalized: np.ndarray  # [C, N, K, 2], [-1, 1]
+    ``uv_px`` is always in NumPy/image-array index coordinates: pixel index 0
+    has center coordinate 0. Camera-model-specific pixel-center offsets are
+    removed when the LUT is built. This keeps downstream interpolation semantics
+    explicit and prevents the MVS-GI half-pixel convention from leaking into the
+    stereo matcher.
+    """
+
+    uv_px: np.ndarray  # [C, N, K, 2], array-index coordinates
+    uv_normalized: np.ndarray  # [C, N, K, 2], align_corners=True convention
     valid: np.ndarray  # [C, N, K]
     depths_m: np.ndarray  # [K]
 
     @property
     def visibility_mask(self) -> np.ndarray:
-        """Per-ray/per-depth camera visibility encoded as an unsigned bitmask.
-
-        Camera ``c`` maps to bit ``1 << c``. With the current 3-camera NADIR
-        rig, values are in ``0..7``. Visibility remains depth-dependent because
-        the camera optical centers are not co-located with the rig origin.
-        """
         if self.valid.shape[0] > 8:
             raise ValueError("visibility_mask currently supports at most 8 cameras")
         mask = np.zeros(self.valid.shape[1:], dtype=np.uint8)
@@ -33,7 +34,6 @@ class ProjectionLUT:
 
     @property
     def view_count(self) -> np.ndarray:
-        """Number of geometrically valid camera observations for each hypothesis."""
         return np.sum(self.valid, axis=0, dtype=np.uint8)
 
 
@@ -64,13 +64,15 @@ def build_projection_lut(
     valid = np.zeros((c_count, n, k), dtype=bool)
 
     for ci, camera in enumerate(rig.cameras):
-        uv, ok = camera.project_body_points(points_B)
-        uv_px[ci] = uv.astype(np.float32)
+        uv_model, ok = camera.project_body_points(points_B)
+        offset = float(camera.model.pixel_center_offset)
+        uv_array = uv_model - offset
+        uv_px[ci] = uv_array.astype(np.float32)
         valid[ci] = ok
 
-        # align_corners=True convention; deployment adapter may convert if required.
-        x = 2.0 * uv[..., 0] / max(camera.model.width - 1, 1) - 1.0
-        y = 2.0 * uv[..., 1] / max(camera.model.height - 1, 1) - 1.0
+        # Array-index coordinates use the standard align_corners=True mapping.
+        x = 2.0 * uv_array[..., 0] / max(camera.model.width - 1, 1) - 1.0
+        y = 2.0 * uv_array[..., 1] / max(camera.model.height - 1, 1) - 1.0
         uv_norm[ci, ..., 0] = x.astype(np.float32)
         uv_norm[ci, ..., 1] = y.astype(np.float32)
 
