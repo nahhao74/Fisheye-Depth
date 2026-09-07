@@ -5,7 +5,7 @@ from itertools import combinations
 
 import numpy as np
 
-from .double_sphere import DoubleSphereCamera
+from .camera_model import NativeCameraModel
 from .transforms import transform_points
 
 
@@ -19,10 +19,13 @@ class RigCamera:
     """
 
     name: str
-    model: DoubleSphereCamera
+    model: NativeCameraModel
     T_C_B: np.ndarray
 
     def __post_init__(self) -> None:
+        if not isinstance(self.model, NativeCameraModel):
+            raise TypeError("model must implement the NativeCameraModel protocol")
+
         T = np.asarray(self.T_C_B, dtype=np.float64)
         if T.shape != (4, 4):
             raise ValueError("T_C_B must be 4x4")
