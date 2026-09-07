@@ -22,14 +22,31 @@ class MvsGiCsvSource:
 
 
 @dataclass(frozen=True)
+class MvsGiManifestSummary:
+    """Source-level camera-model bindings from MVS-GI ``manifest.json``."""
+
+    camera_model_specs: dict[str, dict]
+    camera_to_model_key: dict[str, str]
+
+    @property
+    def camera_to_model_type(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for camera_key, model_key in self.camera_to_model_key.items():
+            spec = self.camera_model_specs[model_key]
+            model_type = spec.get("type")
+            out[camera_key] = str(model_type) if model_type is not None else "<missing>"
+        return out
+
+
+@dataclass(frozen=True)
 class MvsGiSample:
     """One synchronized 3-fisheye MVS-GI sample.
 
     This adapter intentionally preserves MVS-GI source semantics instead of
     pretending that the public dataset has already been converted into NADIR's
-    final calibration contract. ``metadata.json`` and ``frame_graph.json`` are
-    carried explicitly until the calibration adapter is validated on downloaded
-    data.
+    final calibration contract. Dataset metadata, frame graph and camera-model
+    manifest are carried explicitly until the calibration adapter is validated
+    on downloaded data.
     """
 
     sample_id: str
@@ -37,6 +54,7 @@ class MvsGiSample:
     distance_gt_path: Path
     metadata_path: Path
     frame_graph_path: Path
+    manifest_path: Path
     source_csv: Path
     environment: str
     collection: str
@@ -93,6 +111,45 @@ def _load_json(path: Path) -> dict:
     return obj
 
 
+def read_manifest_summary(path: str | Path) -> MvsGiManifestSummary:
+    """Read camera-model bindings using the official MVS-GI manifest semantics."""
+
+    manifest = _load_json(Path(path))
+    camera_models = manifest.get("camera_models")
+    samplers = manifest.get("samplers")
+    if not isinstance(camera_models, dict):
+        raise MvsGiLayoutError("manifest.json must contain a camera_models object")
+    if not isinstance(samplers, list):
+        raise MvsGiLayoutError("manifest.json must contain a samplers list")
+
+    specs: dict[str, dict] = {}
+    for key, spec in camera_models.items():
+        if not isinstance(spec, dict):
+            raise MvsGiLayoutError(f"camera model {key!r} must be an object")
+        specs[str(key)] = spec
+
+    bindings: dict[str, str] = {}
+    for entry in samplers:
+        if not isinstance(entry, dict):
+            raise MvsGiLayoutError("manifest sampler entries must be objects")
+        if not entry.get("mvs_main_cam_model_for_cam"):
+            continue
+        camera_key = entry.get("mvs_cam_key")
+        sampler = entry.get("sampler")
+        if not isinstance(camera_key, str) or not isinstance(sampler, dict):
+            raise MvsGiLayoutError("invalid main-camera sampler entry in manifest.json")
+        model_key = sampler.get("cam_model_key")
+        if not isinstance(model_key, str) or model_key not in specs:
+            raise MvsGiLayoutError(
+                f"sampler for {camera_key!r} references unknown camera model {model_key!r}"
+            )
+        bindings[camera_key] = model_key
+
+    if not bindings:
+        raise MvsGiLayoutError("manifest.json contains no main MVS camera-model bindings")
+    return MvsGiManifestSummary(camera_model_specs=specs, camera_to_model_key=bindings)
+
+
 def _normalize_csv_path(value: str) -> Path:
     # Official MVS-GI code explicitly handles Windows backslashes in CSVs.
     return Path(value.replace("\\", "/"))
@@ -103,6 +160,7 @@ def discover_csv_sources(root: str | Path, split: str = "validate") -> tuple[Mvs
 
     The logic mirrors the official public loader:
 
+    - root/manifest.json binds native camera models to input cameras;
     - root/data_partitions.json selects environments/collections;
     - a collection directory contains meta.json;
     - meta.json points to ``selected_file_list``;
@@ -112,6 +170,7 @@ def discover_csv_sources(root: str | Path, split: str = "validate") -> tuple[Mvs
     root = Path(root)
     _load_json(root / "metadata.json")
     _load_json(root / "frame_graph.json")
+    read_manifest_summary(root / "manifest.json")
     partitions = _load_json(root / "data_partitions.json")
 
     if split not in partitions:
@@ -187,6 +246,13 @@ def load_samples(
     root = Path(root)
     metadata = root / "metadata.json"
     frame_graph = root / "frame_graph.json"
+    manifest = root / "manifest.json"
+    manifest_summary = read_manifest_summary(manifest)
+    missing_bindings = set(camera_keys).difference(manifest_summary.camera_to_model_key)
+    if missing_bindings:
+        raise MvsGiLayoutError(
+            f"manifest lacks camera-model bindings for: {sorted(missing_bindings)}"
+        )
     sources = discover_csv_sources(root, split=split)
 
     image_columns = tuple(f"{key}{rgb_suffix}" for key in camera_keys)
@@ -237,6 +303,7 @@ def load_samples(
                         distance_gt_path=distance,
                         metadata_path=metadata,
                         frame_graph_path=frame_graph,
+                        manifest_path=manifest,
                         source_csv=source.csv_path,
                         environment=source.environment,
                         collection=source.collection,
