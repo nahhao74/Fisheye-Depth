@@ -1,6 +1,7 @@
 import numpy as np
 
 from nadir.geometry.double_sphere import DoubleSphereCamera
+from nadir.geometry.linear_sphere import LinearSphereCamera
 from nadir.geometry.lut import build_projection_lut
 from nadir.geometry.observability import compute_pair_observability
 from nadir.geometry.rig import CameraRig, RigCamera
@@ -41,13 +42,34 @@ def test_projection_lut_and_baseline_observability():
     assert obs.pair_valid.shape == (3, 2, 3)
     assert np.all(obs.pair_valid)
 
-    # Pair (c0, c2) has a 0.2 m x-axis baseline. For the nadir +Z ray,
-    # the whole baseline is perpendicular to the viewing direction.
     np.testing.assert_allclose(obs.effective_baseline_m[1, 0], 0.2, atol=1e-12)
-
-    # A fixed physical baseline produces a smaller triangulation angle as range grows.
     assert obs.triangulation_angle_rad[1, 0, 0] > obs.triangulation_angle_rad[1, 0, -1]
     assert obs.sin_triangulation_angle[1, 0, 0] > obs.sin_triangulation_angle[1, 0, -1]
+
+
+def test_lut_converts_model_half_pixel_centers_to_array_indices():
+    model = LinearSphereCamera(
+        fov_degree=195.0,
+        width=1024,
+        height=1024,
+        pixel_center_offset=0.5,
+    )
+    cameras = []
+    for i, x in enumerate((-0.1, 0.0, 0.1)):
+        T_C_B = np.eye(4)
+        T_C_B[0, 3] = -x
+        cameras.append(RigCamera(name=f"c{i}", model=model, T_C_B=T_C_B))
+    rig = CameraRig(tuple(cameras))
+
+    # For the center camera and +Z ray, source-model projection is (512, 512).
+    # With MVS-GI's n+0.5 pixel-center convention this samples array coordinate
+    # (511.5, 511.5), i.e. exactly between the four central even-sized pixels.
+    lut = build_projection_lut(
+        rig,
+        np.array([[0.0, 0.0, 1.0]], dtype=np.float64),
+        np.array([2.0], dtype=np.float64),
+    )
+    np.testing.assert_allclose(lut.uv_px[1, 0, 0], [511.5, 511.5], atol=1e-6)
 
 
 def test_rig_rejects_non_rigid_extrinsic_rotation():
