@@ -11,6 +11,7 @@ from .mvs_gi import (
     read_compressed_float,
     read_manifest_summary,
 )
+from .mvs_gi_pose import read_camera_image_poses
 
 __all__ = [
     "ManifestDataset",
@@ -25,4 +26,5 @@ __all__ = [
     "load_mvs_gi_samples",
     "read_compressed_float",
     "read_manifest_summary",
+    "read_camera_image_poses",
 ]
