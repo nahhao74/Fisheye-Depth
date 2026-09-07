@@ -16,13 +16,16 @@ class LinearSphereCamera:
     - the circular image radius ``W/2`` corresponds to ``FoV/2``;
     - rays beyond 90 degrees are valid whenever ``FoV > 180``.
 
-    The official implementation requires a square image; NADIR keeps the same
-    restriction instead of silently changing source-camera semantics.
+    ``pixel_center_offset`` is kept separate from the projection equations. The
+    released MVS-GI implementation generates image pixel centers at ``n + 0.5``;
+    generic NADIR cameras may instead use ``n``. The projection LUT converts the
+    model coordinate to NumPy array-index coordinates before sampling.
     """
 
     fov_degree: float
     width: int
     height: int
+    pixel_center_offset: float = 0.0
     eps: float = 1e-12
 
     def __post_init__(self) -> None:
@@ -32,6 +35,10 @@ class LinearSphereCamera:
             raise ValueError("width and height must be positive")
         if self.width != self.height:
             raise ValueError("LinearSphereCamera requires a square image")
+        if not np.isfinite(self.pixel_center_offset) or not (
+            0.0 <= self.pixel_center_offset < 1.0
+        ):
+            raise ValueError("pixel_center_offset must be finite and in [0, 1)")
         if self.eps <= 0.0:
             raise ValueError("eps must be positive")
 
@@ -47,13 +54,24 @@ class LinearSphereCamera:
     def cy(self) -> float:
         return self.height / 2.0
 
+    def _bounds_mask(self, u: np.ndarray, v: np.ndarray) -> np.ndarray:
+        o = self.pixel_center_offset
+        return (
+            np.isfinite(u)
+            & np.isfinite(v)
+            & (u >= o)
+            & (u <= (self.width - 1) + o)
+            & (v >= o)
+            & (v <= (self.height - 1) + o)
+        )
+
     def unproject(
         self,
         uv: np.ndarray,
         *,
         check_bounds: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Unproject native fisheye pixels to unit camera-frame rays."""
+        """Unproject native fisheye model coordinates to unit camera rays."""
 
         q = np.asarray(uv, dtype=np.float64)
         if q.shape[-1] != 2:
@@ -75,14 +93,7 @@ class LinearSphereCamera:
         rays = np.stack((x, y, z), axis=-1)
 
         if check_bounds:
-            valid &= (
-                np.isfinite(u)
-                & np.isfinite(v)
-                & (u >= 0.0)
-                & (u < self.width)
-                & (v >= 0.0)
-                & (v < self.height)
-            )
+            valid &= self._bounds_mask(u, v)
 
         rays = np.where(valid[..., None], rays, np.nan)
         return rays, valid
@@ -93,7 +104,7 @@ class LinearSphereCamera:
         *,
         check_bounds: bool = True,
     ) -> tuple[np.ndarray, np.ndarray]:
-        """Project camera-frame 3-D point(s) to native fisheye pixels."""
+        """Project camera-frame 3-D point(s) to native fisheye model coordinates."""
 
         p = np.asarray(xyz, dtype=np.float64)
         if p.shape[-1] != 3:
@@ -123,12 +134,7 @@ class LinearSphereCamera:
             & (incidence <= self.fov_rad / 2.0 + self.eps)
         )
         if check_bounds:
-            valid &= (
-                (u >= 0.0)
-                & (u < self.width)
-                & (v >= 0.0)
-                & (v < self.height)
-            )
+            valid &= self._bounds_mask(u, v)
 
         uv_out = np.stack((u, v), axis=-1)
         uv_out = np.where(valid[..., None], uv_out, np.nan)
