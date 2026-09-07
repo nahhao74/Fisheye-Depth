@@ -6,7 +6,12 @@ from pathlib import Path
 
 import numpy as np
 
-from nadir.data.mvs_gi import discover_csv_sources, load_samples, read_compressed_float
+from nadir.data.mvs_gi import (
+    discover_csv_sources,
+    load_samples,
+    read_compressed_float,
+    read_manifest_summary,
+)
 
 
 def main() -> None:
@@ -28,6 +33,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    manifest = read_manifest_summary(args.root / "manifest.json")
     sources = discover_csv_sources(args.root, split=args.split)
     samples = load_samples(
         args.root,
@@ -37,6 +43,8 @@ def main() -> None:
 
     print(f"root: {args.root}")
     print(f"split: {args.split}")
+    print(f"camera_model_bindings: {manifest.camera_to_model_key}")
+    print(f"camera_model_types: {manifest.camera_to_model_type}")
     print(f"trajectory_csv_count: {len(sources)}")
     print(f"sample_count: {len(samples)}")
 
