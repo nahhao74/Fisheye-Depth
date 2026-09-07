@@ -4,7 +4,11 @@ from pathlib import Path
 
 import numpy as np
 
-from nadir.data.mvs_gi import decode_compressed_float_u8, load_samples
+from nadir.data.mvs_gi import (
+    decode_compressed_float_u8,
+    load_samples,
+    read_manifest_summary,
+)
 
 
 def test_compressed_float_byte_reinterpretation_roundtrip():
@@ -27,9 +31,40 @@ def test_mvs_gi_partition_meta_csv_contract(tmp_path: Path):
     (root / "frame_graph.json").write_text(
         '{"frames": [], "typical_poses": {}, "transforms": []}', encoding="utf-8"
     )
+    manifest = {
+        "camera_models": {
+            "fisheye": {
+                "type": "DoubleSphere",
+                "xi": 0.5,
+                "alpha": 0.55,
+                "fx": 300.0,
+                "fy": 300.0,
+                "cx": 320.0,
+                "cy": 320.0,
+                "fov_degree": 195,
+                "shape_struct": {"H": 640, "W": 640},
+            }
+        },
+        "samplers": [
+            {
+                "mvs_main_cam_model_for_cam": True,
+                "mvs_cam_key": key,
+                "sampler": {"cam_model_key": "fisheye"},
+            }
+            for key in ("cam0", "cam1", "cam2")
+        ],
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
     (root / "data_partitions.json").write_text(
         json.dumps({"validate": {"EnvA": ["Trajectory01"]}}), encoding="utf-8"
     )
+
+    summary = read_manifest_summary(root / "manifest.json")
+    assert summary.camera_to_model_type == {
+        "cam0": "DoubleSphere",
+        "cam1": "DoubleSphere",
+        "cam2": "DoubleSphere",
+    }
 
     traj = root / "EnvA" / "Trajectory01"
     traj.mkdir(parents=True)
@@ -67,4 +102,5 @@ def test_mvs_gi_partition_meta_csv_contract(tmp_path: Path):
     assert sample.distance_gt_path == traj / "rig/000001.png"
     assert sample.metadata_path == root / "metadata.json"
     assert sample.frame_graph_path == root / "frame_graph.json"
+    assert sample.manifest_path == root / "manifest.json"
     assert sample.sample_id.endswith(":00000000")
