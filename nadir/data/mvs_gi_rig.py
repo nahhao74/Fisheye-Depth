@@ -11,6 +11,8 @@ from nadir.geometry.camera_model import NativeCameraModel
 from .mvs_gi import MvsGiLayoutError, read_manifest_summary
 from .mvs_gi_pose import read_camera_image_poses
 
+MVS_GI_PIXEL_CENTER_OFFSET = 0.5
+
 
 def _shape_hw(spec: dict) -> tuple[int, int]:
     shape = spec.get("shape_struct")
@@ -26,10 +28,9 @@ def _shape_hw(spec: dict) -> tuple[int, int]:
 def camera_model_from_mvs_gi_spec(spec: dict) -> NativeCameraModel:
     """Construct a native NADIR camera model from one MVS-GI manifest spec.
 
-    Only source models whose equations have been independently checked against
-    the released ``mvs_utils`` implementation are accepted. Unsupported models
-    fail loudly rather than being approximated by a pinhole or another fisheye
-    model.
+    The released ``mvs_utils`` camera grid is generated with pixel centers at
+    ``n + 0.5``. NADIR records that source convention explicitly and converts to
+    array-index coordinates only when building a sampling LUT.
     """
 
     if not isinstance(spec, dict):
@@ -48,6 +49,7 @@ def camera_model_from_mvs_gi_spec(spec: dict) -> NativeCameraModel:
             fov_degree=float(fov),
             width=w,
             height=h,
+            pixel_center_offset=MVS_GI_PIXEL_CENTER_OFFSET,
         )
 
     if model_type == "DoubleSphere":
@@ -66,6 +68,7 @@ def camera_model_from_mvs_gi_spec(spec: dict) -> NativeCameraModel:
             cy=float(spec["cy"]),
             width=w,
             height=h,
+            pixel_center_offset=MVS_GI_PIXEL_CENTER_OFFSET,
         )
 
     raise MvsGiLayoutError(
@@ -94,12 +97,7 @@ def build_mvs_gi_rig(
     camera_keys: Sequence[str] = ("cam0", "cam1", "cam2"),
     body_frame: str = "rbf",
 ) -> CameraRig:
-    """Build a calibrated NADIR rig directly from released MVS-GI metadata.
-
-    ``read_camera_image_poses`` returns ``T_B_C`` following the dataset's FTensor
-    convention. NADIR's ``RigCamera`` stores ``T_C_B``, so the conversion is an
-    explicit rigid inverse. No coordinate-axis reinterpretation is applied.
-    """
+    """Build a calibrated NADIR rig directly from released MVS-GI metadata."""
 
     if len(camera_keys) != 3:
         raise ValueError("current NADIR MVS-GI baseline requires exactly 3 cameras")
