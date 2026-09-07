@@ -16,6 +16,26 @@ class ProjectionLUT:
     valid: np.ndarray  # [C, N, K]
     depths_m: np.ndarray  # [K]
 
+    @property
+    def visibility_mask(self) -> np.ndarray:
+        """Per-ray/per-depth camera visibility encoded as an unsigned bitmask.
+
+        Camera ``c`` maps to bit ``1 << c``. With the current 3-camera NADIR
+        rig, values are in ``0..7``. Visibility remains depth-dependent because
+        the camera optical centers are not co-located with the rig origin.
+        """
+        if self.valid.shape[0] > 8:
+            raise ValueError("visibility_mask currently supports at most 8 cameras")
+        mask = np.zeros(self.valid.shape[1:], dtype=np.uint8)
+        for ci in range(self.valid.shape[0]):
+            mask |= self.valid[ci].astype(np.uint8) << ci
+        return mask
+
+    @property
+    def view_count(self) -> np.ndarray:
+        """Number of geometrically valid camera observations for each hypothesis."""
+        return np.sum(self.valid, axis=0, dtype=np.uint8)
+
 
 def build_projection_lut(
     rig: CameraRig,
@@ -28,6 +48,8 @@ def build_projection_lut(
         raise ValueError("rays_B must have shape (..., 3)")
     if depths.ndim != 1 or depths.size == 0 or np.any(depths <= 0.0):
         raise ValueError("depths_m must be a non-empty positive 1-D array")
+    if np.any(~np.isfinite(rays)) or np.any(~np.isfinite(depths)):
+        raise ValueError("rays_B and depths_m must be finite")
 
     flat_rays = rays.reshape(-1, 3)
     norms = np.linalg.norm(flat_rays, axis=-1)
