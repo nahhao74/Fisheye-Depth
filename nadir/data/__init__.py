@@ -11,6 +11,11 @@ from .mvs_gi import (
     read_compressed_float,
     read_manifest_summary,
 )
+from .mvs_gi_masks import (
+    MvsGiMaskPaths,
+    discover_mvs_gi_mask_paths,
+    read_mvs_gi_masks,
+)
 from .mvs_gi_pose import read_camera_image_poses
 from .mvs_gi_reference import MvsGiRigReference, read_mvs_gi_rig_reference
 from .mvs_gi_rig import build_mvs_gi_rig, camera_model_from_mvs_gi_spec
@@ -22,13 +27,16 @@ __all__ = [
     "MvsGiLayoutError",
     "MvsGiManifestSummary",
     "MvsGiSample",
+    "MvsGiMaskPaths",
     "MvsGiRigReference",
     "decode_compressed_float_u8",
     "discover_csv_sources",
+    "discover_mvs_gi_mask_paths",
     "iter_mvs_gi_samples",
     "load_mvs_gi_samples",
     "read_compressed_float",
     "read_manifest_summary",
+    "read_mvs_gi_masks",
     "read_camera_image_poses",
     "read_mvs_gi_rig_reference",
     "build_mvs_gi_rig",
