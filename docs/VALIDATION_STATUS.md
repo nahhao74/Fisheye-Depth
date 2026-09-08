@@ -26,6 +26,7 @@ Until Gate A is reviewed and accepted, downstream dense/learned architecture is 
 | --- | --- | --- |
 | MVS-GI file/metadata semantics | `SOURCE_VERIFIED` | Loader follows released layout/source semantics. |
 | MVS-GI compressed float distance decoding | `SOURCE_VERIFIED` + `MATH_UNIT_VERIFIED` | Byte reinterpretation and tests exist; real payload still needs execution in the target workflow. |
+| MVS-GI raw distance meaning | `SOURCE_VERIFIED` | Released `RayMaker.make_rays_from_grid_distance` multiplies unit native-camera rays by the provided distance values, so the raw distance image is used as radial range along the reference camera ray, not camera-Z depth. |
 | LinearSphere/DoubleSphere projection | `MATH_UNIT_VERIFIED` | Round-trip and >90° geometry tests exist. This does not prove real-lens calibration quality. |
 | Frame graph / extrinsics | `MATH_UNIT_VERIFIED` | Transform convention is implemented and tested; real-data residuals are not yet characterized. |
 | Generalized two-ray triangulation | `MATH_UNIT_VERIFIED` | Synthetic intersections/degenerate rays are tested. |
@@ -57,6 +58,16 @@ The initial harness is `scripts/run_gate_a_sparse.py`.
 
 No scientific acceptance threshold is hard-coded. Optional filters such as minimum triangulation angle, maximum closest-ray gap or maximum reprojection error must be supplied explicitly and reported as experiment settings.
 
+### Ground-truth sampling note
+
+The released MVS-GI training loader resamples distance with its `INTER_BLENDED` path and a dedicated blend function. The current Gate A harness samples the **raw** reference distance image with NADIR's simple bilinear sampler when evaluating a projected sparse point. Therefore:
+
+- radial-distance semantics are source-verified;
+- the exact sub-pixel interpolation implementation is **not yet source-equivalent**;
+- depth errors near discontinuities must not be over-interpreted until nearest/bilinear/source-blended GT sampling is compared.
+
+This interpolation difference is an explicit validation item, not something to hide inside the acceptance result.
+
 ## Required Gate A evidence
 
 A reviewable Gate A report should contain at least:
@@ -70,7 +81,8 @@ A reviewable Gate A report should contain at least:
 - metric depth absolute/relative error against GT;
 - error stratified by incidence bins, especially `0–60°`, `60–90°`, and `>90°` for the MVS-GI bootstrap;
 - exact matcher/filter parameters;
-- clear separation between source-derived parameters and experiment-chosen parameters.
+- clear separation between source-derived parameters and experiment-chosen parameters;
+- GT sampling method used for the comparison.
 
 Gate A remains `NOT_YET_PROVEN` until real payload results exist and the owner reviews a frozen acceptance criterion. The harness must not declare PASS on its own.
 
