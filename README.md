@@ -2,97 +2,99 @@
 
 ## NADIR — Native-fisheye Adaptive Depth Inference from Rig
 
-NADIR is a research project targeting a **fast metric radial-range estimate** from a synchronized downward-facing multi-fisheye UAV rig.
+NADIR is a research project targeting **fast approximate metric radial range + confidence** from a synchronized downward-facing three-fisheye UAV rig.
 
 > **Current scientific status: `GATE_A_NOT_YET_PROVEN`.**
 >
-> The repository contains geometry/data tooling and experimental baselines, but it does **not** yet demonstrate that the final 3 × 225° NADIR depth pipeline works. The active task is real-data feasibility and geometry identification. See `docs/VALIDATION_STATUS.md`.
+> The repository contains geometry/data tooling and experimental baselines, but it does **not** yet demonstrate that the final `3 × ~225°` NADIR pipeline works. The active task remains real-data feasibility and geometry identification. See `docs/VALIDATION_STATUS.md`.
+
+The canonical downstream design is now:
+
+- `docs/FINAL_RESEARCH_ARCHITECTURE.md` — full final research architecture;
+- `docs/LATENCY_FIRST_ARCHITECTURE.md` — latency-first design rationale;
+- `docs/IMPLEMENTATION_PLAN.md` — staged implementation/benchmark plan;
+- `docs/VALIDATION_STATUS.md` — authoritative statement of what is actually proven.
 
 ## Research priority
 
-NADIR is now explicitly **latency-first**:
+NADIR is explicitly **latency-first**:
 
 ```text
-1. P95 latency
-2. robustness / catastrophic-error avoidance
-3. coarse metric-range accuracy
+1. P95 end-to-end latency
+2. robustness / catastrophic near-far error avoidance
+3. coarse metric-range accuracy + near/new-structure recall
 4. fine depth accuracy
 ```
 
-The intended output does not require absolute sub-centimeter reconstruction. It must estimate useful approximate range quickly and avoid catastrophic near/far mistakes. Accuracy improvements that materially worsen P95 latency are rejected unless they run only on a bootstrap/background path.
+The target is not sub-centimeter reconstruction. A coarse range delivered early can be more useful than a more precise estimate delivered too late.
 
 Current engineering targets remain:
 
-- hard target: >= 15 FPS and P95 capture-to-depth < 80 ms;
-- design target: >= 20 FPS and P95 < 60 ms;
-- stretch target: 30 FPS.
+- hard target: `>= 15 FPS` and P95 capture-to-range `< 80 ms`;
+- design target: `>= 20 FPS` and P95 `< 60 ms`;
+- stretch target: `30 FPS`.
 
 These are targets, not measured QCS8550 claims.
 
 ## Target sensing stack
 
 ```text
-3 × synchronized fisheye cameras (~225° FoV)
+3 × synchronized native fisheye cameras (~225° FoV)
 + calibrated intrinsics/extrinsics
 + IMU
 + GNSS/RTK when available
 + optional barometer prior
-                    │
-                    ▼
-       metric radial range + confidence
+                    |
+                    v
+       approximate metric radial range
+                + confidence
 ```
 
-This is the **target**, not the current validated implementation. The present Gate A scope uses camera geometry and real/released stereo evidence only; IMU/RTK and adaptive temporal inference are downstream hypotheses.
-
-The project is limited to depth/range generation. Landing, obstacle avoidance, semantic hazard reasoning, mapping and control are outside NADIR-Core.
+This is the target architecture, not the current validated implementation.
 
 ## Non-negotiable geometry rule
 
-**Do not flatten, stitch or globally rectify the three fisheye images before stereo.**
+**Do not flatten, stitch or globally rectify the fisheye RGB views before stereo.**
 
-The three native fisheye views remain separate because their physical camera-center offsets/parallax are the metric depth evidence. Downstream code may use calibrated ray lookup tables, spherical/local signal representations or common output rays, but not a panorama that collapses the rig into one virtual optical center.
+The three cameras retain separate physical centers. Calibrated ray lookups, local spherical signals and common output-ray representations are permitted, but parallax must not be destroyed by collapsing the rig into one virtual optical center.
+
+Output semantics are radial range from a selected rig reference origin:
+
+```text
+P_i = O_R + rho_i r_i,   ||r_i|| = 1
+```
+
+Navigation/global state uses NED; rig/body uses FRD; camera frames remain native.
 
 ## Current task — Gate A
 
 Gate A asks whether:
 
 ```text
-known camera models
+known native camera models
 + known physical camera-center baselines
 + real synchronized multi-view correspondences
-        │
-        ▼
-metric triangulated 3-D / radial range
-        │
-        ▼
-consistent with metric ground truth
+        |
+        v
+metric generalized-camera triangulation
+        |
+        v
+radial range consistent with released GT
 ```
 
-The first bootstrap dataset is MVS-GI because its released setup is close to the required three-camera same-facing topology. Its public raw-camera configuration is ~195° and therefore **cannot validate** the final 97.5°–112.5° annulus of a 225° lens.
+The first bootstrap dataset is MVS-GI because its released setup is close to the required three-camera same-facing topology. Its public raw-camera configuration is ~195° and therefore **cannot validate** the final `97.5°–112.5°` annulus of a 225° lens.
 
-Gate A measures sparse generalized-camera triangulation, closest-ray gap, triangulation angle/conditioning, reprojection error and metric depth error against released GT. No automatic scientific PASS threshold is currently frozen.
+Gate A measures sparse generalized-camera triangulation, closest-ray gap, triangulation angle/conditioning, reprojection error and metric range error against released GT. No automatic scientific PASS threshold is frozen.
 
-## Status categories
+## Status vocabulary
 
-- `SOURCE_VERIFIED` — supported by released source/data semantics.
-- `MATH_UNIT_VERIFIED` — controlled math/unit tests only.
-- `REAL_MEASURED` — measured on actual downloaded payloads.
-- `ACCEPTED` — owner-reviewed evidence passes a frozen contract.
+- `SOURCE_VERIFIED` — supported by released source/data semantics;
+- `MATH_UNIT_VERIFIED` — controlled math/unit tests only;
+- `REAL_MEASURED` — measured on actual downloaded payloads;
+- `ACCEPTED` — owner-reviewed evidence passes a frozen contract;
 - `HYPOTHESIS_NOT_VALIDATED` — retained candidate, not an accepted pipeline block.
 
-Most current implementation is in the first two categories. Real-data Gate A evidence has not yet been produced.
-
-## Geometry contract
-
-1. **Do not stitch RGB before stereo.** Separate camera centers/parallax are the primary spatial depth evidence.
-2. **Preserve native fisheye geometry.** Do not silently replace a >180° fisheye model with pinhole geometry.
-3. **Use generalized-camera rays.** Each observation is `(O_c, r_c)` with its own physical camera center.
-4. **Dense target semantics are radial range** from a selected rig reference origin:
-
-   `P_i = O_R + rho_i * r_i`, with `||r_i|| = 1`.
-
-5. **Body/Rig depth geometry is distinct from later navigation state.** FRD is the intended body/rig convention; NED is reserved for navigation-state fusion when motion priors are introduced later.
-6. A calibrated per-camera `RayLUT` may cache native ray direction, solid angle, validity and later measured quality metadata, but it must preserve camera identity.
+Code existence does not imply empirical validation.
 
 ## What is implemented now
 
@@ -105,127 +107,117 @@ Most current implementation is in the first two categories. Real-data Gate A evi
 - lower-hemisphere ray/visibility/observability/LUT tooling;
 - metric error/profiling utilities;
 - sparse Gate A harness: `scripts/run_gate_a_sparse.py`;
-- an older dense photometric sphere-sweep prototype retained as `HYPOTHESIS_NOT_VALIDATED`;
+- older dense photometric sphere-sweep prototype retained as `HYPOTHESIS_NOT_VALIDATED`;
 - unit tests and GitHub Actions CI.
 
-Code existence does **not** imply empirical validation.
+## Final research architecture — hypothesis only
 
-## Gate A run sequence
-
-```text
-MVS-GI real sample
-      ↓
-verify manifest / camera model / extrinsics / masks / GT semantics
-      ↓
-ORB sparse matches on native fisheye images
-      ↓
-pixel → native ray → Body/Rig ray
-      ↓
-generalized two-ray triangulation
-      ↓
-ray gap + angle + conditioning + reprojection diagnostics
-      ↓
-project triangulated point into released rig-reference GT
-      ↓
-metric radial error vs GT
-      ↓
-error vs incidence angle / baseline geometry
-      ↓
-owner review of Gate A evidence
-```
-
-Only after Gate A is accepted should downstream local matchers, temporal reuse and adaptive scheduling be promoted.
-
-## Post-Gate-A architecture hypothesis — latency-first
-
-The current research direction is **not** “run a full dense network every frame.” It is:
+After Gate A, the current final design direction combines selected ideas from the reviewed spherical DSP matcher and the LAWGRAPH research concept, but only where they directly help depth/range inference.
 
 ```text
-3 native fisheye
-      ↓
-RayLUT / geometry / visibility
-      ↓
-previous range + uncertainty + IMU/RTK pose prior
-      ↓
-adaptive compute scheduler
-      ↓
-active anchors only
-      ↓
-best camera pair first
-      ↓
-local low-cost matcher
-  (Census/Hamming OR spherical DSP OR tiny learned feature)
-      ↓
-local lambda/depth refinement
-      ↓
-second/third pair only if needed
-      ↓
-robust consensus / confidence
-      ↓
-persistent sparse range memory
+L0  Geometry / static law layer
+    RayLUT + solid angle + extrinsics + visibility + static quality
+                         |
+L1  Fast sensory buffer
+    current images + timestamps + IMU synchronization
+                         |
+L2  Typed temporal predictor
+    previous range + uncertainty + provenance + relative SE(3)
+                         |
+L3  Surprise / uncertainty / deadline scheduler
+    decide WHEN, WHERE and HOW MUCH compute to spend
+                         |
+L4  Local native-ray measurement
+    reuse / Census-Hamming / spherical DSP / tiny learned fallback
+    + direct-depth / inverse-depth / lambda search
+                         |
+L5  Three-camera pair manager
+    best pair first -> second if needed -> third-pair fallback
+                         |
+L6  Belief update
+    range + sensor uncertainty + model uncertainty + status
+                         |
+L7  Multi-timescale memory
+    sensory buffer + working range memory + persistent spatial state
+                         |
+L8  Runtime assurance / rebootstrap
+    UNKNOWN rather than fabricated depth
 ```
 
-The scheduler asks three questions before expensive matching:
+The expensive matcher is only one layer. The main architectural objective is to **avoid unnecessary matching**.
 
-```text
-WHEN must this region be recomputed?
-WHERE should compute be spent?
-HOW MUCH evidence is enough before stopping?
-```
+## LAWGRAPH ideas retained in NADIR
 
-The intended steady-state behavior is prediction → verification → local correction, rather than full-search-from-scratch every frame.
+NADIR does not become a general LAWGRAPH world model. It only retains the mechanisms directly useful to fast depth:
 
-See `docs/LATENCY_FIRST_ARCHITECTURE.md` for the detailed hypothesis.
+- **equation-first geometry** — do not relearn projection, baselines or rigid transforms;
+- **typed state** — range carries uncertainty, time, source and status;
+- **predictive coding** — predict from history, measure innovation, recompute only where needed;
+- **event-driven compute** — compute scales with surprise/uncertainty/risk/deadline;
+- **multi-timescale memory** — short sensory buffer, working range memory, longer-lived spatial support;
+- **progressive complexity** — temporal reuse -> cheap Census -> spherical DSP -> tiny learned fallback;
+- **learn only unresolved residuals** — learned blocks should not relearn known geometry;
+- **fail-closed behavior** — insufficient evidence returns `UNKNOWN`, not an invented range.
 
-## DSP/ray-domain matcher direction
+Optional future offline work may attempt to replace learned quality/uncertainty/scheduler residuals with compact identified or symbolic equations, but that is a late-stage hypothesis, not part of Gate A.
 
-A reviewed native-spherical DSP matcher suggests several useful hypotheses for NADIR:
+## Compute dimensions
 
-- calibrated `pixel -> unit ray + solid angle` lookup;
-- local spherical harmonic/Fourier-Bessel signal instead of flattening the fisheye image;
-- pairwise search using `lambda = B / d`;
-- Jacobian-driven search spacing/refinement;
-- progressive frequency-band loading;
-- analytic measurement-noise propagation;
-- explicit early rejection rather than inventing a depth value.
-
-These ideas are **not yet NADIR evidence**. They become candidate local measurement engines to benchmark against Census/Hamming and a tiny learned feature matcher.
-
-## Temporal/adaptive compute hypothesis
-
-After a trustworthy range estimate exists, later frames should propagate it using relative SE(3) and uncertainty. Stable regions may be reused or cheaply checked, while new, stale, uncertain, near or discontinuous regions receive more rays/candidates/pairs.
-
-Compute therefore becomes adaptive in roughly four dimensions:
+The main downstream workload is treated as approximately:
 
 ```text
 N_active_rays
-× N_depth_or_lambda_candidates
+× N_search_candidates
 × N_camera_pairs
 × N_signal_bands_or_feature_channels
 ```
 
-The goal is to reduce average work while maintaining a hard tail-latency budget. An AMR-like idea may be used only as an **adaptive spatial-resolution strategy**; NADIR does not solve Navier-Stokes or perform aerodynamic CFD inside the depth pipeline.
+The scheduler should reduce each factor independently while preserving robustness.
 
-## Future modules
+The AMR/CFD analogy is limited to adaptive spatial resolution:
 
-- **NADIR-PERF** — P50/P95 latency, FPS, memory and active-compute instrumentation.
-- **NADIR-CAL** — target 225° calibration characterization.
-- **NADIR-RAY** — native per-pixel rays and common lower-hemisphere representation.
-- **NADIR-VIS** — overlap, baseline and triangulation observability.
-- **NADIR-CQ / QMAP** — measured camera-quality characterization, not assumed radial edge degradation.
-- **NADIR-TRI** — classical generalized-camera triangulation; currently the active Gate A core.
-- **NADIR-LUT** — fixed-rig projection/ray/solid-angle/visibility tables.
-- **NADIR-DSP** — local spherical/Census measurement-engine candidates; future hypothesis.
-- **NADIR-SCHED** — latency-budgeted active-ray/pair/search-band scheduler; future hypothesis.
-- **NADIR-MEM** — persistent depth/range + uncertainty + age/history state; future hypothesis.
-- **NADIR-MOTION** — IMU-conditioned temporal propagation; future hypothesis.
-- **NADIR-RTK** — RTK/GNSS-conditioned metric temporal baseline; future hypothesis.
-- **NADIR-MVS** — compact learned feature matcher only if it beats deterministic baselines on the Pareto frontier.
-- **NADIR-EDGE** — QCS8550/QNN/accelerator profiling; future hypothesis.
+```text
+stable/smooth/high-confidence -> coarse or reuse
+changing/edge/uncertain/new   -> refine
+```
+
+NADIR does **not** solve Navier-Stokes or perform aerodynamic CFD inside the depth pipeline.
+
+## Local measurement candidates
+
+After Gate A, benchmark rather than assume:
+
+1. ORB/classical reference;
+2. Census/Hamming;
+3. local spherical harmonic/Fourier-Bessel DSP signal;
+4. tiny learned feature/residual only if deterministic methods are insufficient.
+
+A useful pairwise candidate coordinate is:
+
+```text
+lambda = B_ij / d
+```
+
+with native-sphere epipolar Jacobian `J_lambda` for candidate spacing, local refinement and information/conditioning scoring. It must be benchmarked against direct depth and inverse depth before promotion.
+
+## Three-camera strategy
+
+Physical pairs are `01`, `02`, `12`.
+
+Do not run all three at full cost by default:
+
+```text
+best pair first
+    -> early exit if sufficient
+    -> second pair if ambiguous
+    -> third pair only as fallback / consistency evidence
+```
+
+Disagreement may be occlusion or different visible surfaces, so peeling requires explicit validation.
 
 ## Runtime evaluation contract
 
-Every later module must report at least:
+Every downstream experiment must report at least:
 
 ```text
 P50 total latency
@@ -234,42 +226,63 @@ FPS
 peak memory
 active-ray fraction
 mean candidates per active ray
-mean evaluated camera pairs per active ray
+mean evaluated pairs per active ray
 mean signal bands/channels used
+fraction reusing history
+fraction reaching each progressive-compute level
 bootstrap latency
 steady-state latency
+rebootstrap frequency
 catastrophic-range-error rate
 near/new-structure recall
 coarse range error
+UNKNOWN/abstention rate
 ```
 
-Reducing ray count alone is not success if P95 latency does not materially improve.
+Reducing operation count alone is not success if P95 end-to-end latency does not materially improve.
+
+## Research gate sequence
+
+```text
+Gate A  real native-fisheye 3-camera metric geometry feasibility
+Gate B  local measurement benchmark
+Gate C  search coordinate / Jacobian / information allocation
+Gate D  best-pair-first + 3-camera consensus
+Gate E  typed temporal memory + geometric prediction
+Gate F  predictive surprise + progressive compute
+Gate G  adaptive spatial/active-ray scheduling
+Gate H  IMU search compression
+Gate I  RTK/GNSS covariance-conditioned search compression
+Gate J  tiny learned residual only if still useful
+Gate K  QCS8550 deployment / accelerator profiling
+Gate L  optional offline equation/parameter compression
+```
+
+See `docs/FINAL_RESEARCH_ARCHITECTURE.md` for the complete structure and `docs/VALIDATION_STATUS.md` for the authoritative current boundary.
 
 ## Dataset strategy
 
-No public dataset has been identified that simultaneously provides the exact target combination of **3 synchronized fisheye cameras + 225° FoV + dense metric depth GT**.
+No public dataset has been identified that simultaneously provides the exact target combination of **3 synchronized fisheye cameras + 225° FoV + dense metric range GT**.
 
 Current source roles:
 
-- **MVS-GI** — Gate A bootstrap for three-camera same-facing geometry; public source configuration ~195°.
-- **OmniMVS** — near-target ~220° representation reference, different rig topology.
-- **KAIST Sphere Stereo** — multiview fisheye/sphere-sweep reference.
-- **LaFiDa** — real synchronized three-fisheye reference with smaller FoV.
-- **NADIR-SYN225** — planned exact-target synthetic data.
+- **MVS-GI** — Gate A bootstrap for three-camera same-facing geometry; public source configuration ~195°;
+- **OmniMVS** — near-target ~220° representation reference, different rig topology;
+- **KAIST Sphere Stereo** — multiview fisheye/sphere-sweep reference;
+- **LaFiDa** — real synchronized three-fisheye reference with smaller FoV;
+- **NADIR-SYN225** — planned exact-target synthetic data;
 - **NADIR-REAL225** — planned real target-rig calibration/validation.
 
 A result on 195° data must never be promoted as proof for the 225° extreme annulus.
 
 ## Immediate next milestone
 
-The architecture has been expanded on paper, but the execution boundary has **not** moved past Gate A:
+The design is now broader on paper, but execution has **not moved past Gate A**:
 
 1. pull this repository to the Ubuntu machine;
 2. keep downloaded MVS-GI/sample artifacts under `/media/nahhao74/KINGSTON`;
 3. inspect one actual released sample;
 4. run `scripts/run_gate_a_sparse.py` with no optional geometry thresholds first;
-5. review the raw failure distributions;
-6. freeze any acceptance/filter criteria only after seeing the evidence;
+5. review raw failure distributions;
+6. freeze acceptance/filter criteria only after evidence exists;
 7. decide whether Gate A is supported, unsupported or still underidentified.
-
-See `DEVELOPMENT.md`, `docs/VALIDATION_STATUS.md`, and `docs/LATENCY_FIRST_ARCHITECTURE.md` for the authoritative current boundary and downstream research direction.
