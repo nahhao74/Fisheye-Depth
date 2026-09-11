@@ -1,45 +1,45 @@
-# NADIR Implementation Plan
+# NADIR Implementation Plan v1.0
 
 ## 1. Guiding rule
 
 The current scientific task remains **Gate A real-data geometry feasibility**. Downstream architecture work is documented as hypothesis only until Gate A is reviewed.
 
-After Gate A, implementation is **latency-first**:
+The canonical downstream design is `FINAL_RESEARCH_ARCHITECTURE.md`.
+
+After Gate A, implementation is latency-first:
 
 ```text
 1. P95 latency
-2. robustness / catastrophic-error avoidance
-3. coarse metric-range accuracy
-4. fine accuracy
+2. robustness / catastrophic near-far error avoidance
+3. coarse metric-range accuracy + near/new-structure recall
+4. fine depth accuracy
 ```
 
-Do not begin with a large neural model. Do not flatten or stitch fisheye RGB before stereo.
-
-Every milestone must report both scientific and computational performance, with P95 latency treated as the primary deployment metric.
+Do not begin with a large neural model. Do not flatten or stitch fisheye RGB before stereo. Do not introduce a slow module unless it can be bypassed by a valid fast fallback path.
 
 ## 2. Real-time contract
 
 ### Hard target
 
-- throughput >= 15 FPS;
-- P95 capture-to-depth latency < 80 ms;
+- throughput `>= 15 FPS`;
+- P95 capture-to-range latency `< 80 ms`;
 - no uncontrolled memory growth;
 - no unexpected CPU fallback in deployed accelerated graphs.
 
 ### Design target
 
-- >= 20 FPS;
-- P95 latency < 60 ms.
+- `>= 20 FPS`;
+- P95 latency `< 60 ms`.
 
 ### Stretch target
 
-- 30 FPS.
+- `30 FPS`.
 
 These are engineering targets, not measured results.
 
 ## 3. Current active milestone — Gate A
 
-The immediate task is not dense depth optimization. It is to establish or falsify:
+Establish or falsify:
 
 ```text
 known native fisheye camera models
@@ -70,12 +70,14 @@ Per-frame timing should include at least:
 capture_ms
 preprocess_ms
 geometry_ms
-signal_or_descriptor_ms
+temporal_predict_ms
+cheap_change_ms
 scheduler_ms
-temporal_warp_ms
+signal_or_descriptor_ms
 candidate_generation_ms
 matching_ms
 pair_consensus_ms
+belief_update_ms
 memory_update_ms
 total_ms
 fps
@@ -89,6 +91,8 @@ active_ray_fraction
 mean_candidates_per_active_ray
 mean_pairs_per_active_ray
 mean_signal_bands_or_channels
+fraction_reusing_history
+fraction_reaching_each_compute_level
 bootstrap_or_track_mode
 ```
 
@@ -102,16 +106,16 @@ Compile calibration into per-camera native-ray lookup tables:
 ray_C
 solid_angle
 valid
+optional_static_quality
 ```
-
-Later optional fields may include measured static quality. This layer must preserve camera identity and physical centers.
 
 Required tests:
 
 - project/unproject round trip;
 - solid-angle numerical consistency;
 - explicit >90° incidence coverage;
-- camera-model replacement without changing downstream ray-domain contracts.
+- camera-model replacement without changing downstream ray-domain contracts;
+- preservation of camera identity and physical center.
 
 ### M2 — NADIR-OBS
 
@@ -122,9 +126,8 @@ For every candidate output ray/region, characterize:
 - effective baseline;
 - triangulation angle/conditioning;
 - projection validity;
-- incidence region.
-
-Pre-rank camera pairs where possible.
+- incidence region;
+- pre-rank pair quality where possible.
 
 ### M3 — NADIR-CQ
 
@@ -141,33 +144,26 @@ Do not assume monotonic edge degradation.
 
 ### M4 — NADIR-MATCH-BENCH
 
-Benchmark candidate local measurement engines on the same native-ray geometry:
+Benchmark candidate local measurement engines on identical native-ray geometry:
 
-#### A. ORB / classical sparse reference
+```text
+A. ORB / classical sparse reference
+B. Census / Hamming
+C. spherical harmonic / Fourier-Bessel DSP
+D. tiny learned feature/residual
+```
 
-Retain as an interpretable geometry baseline.
+For spherical DSP measure:
 
-#### B. Census / Hamming
-
-Cheap DSP-friendly local comparison with projected native-ray hypotheses.
-
-#### C. Spherical DSP signal
-
-Evaluate a local steerable harmonic/Fourier-Bessel representation inspired by the reviewed spherical signal matcher. Important variables:
-
-- number of active anchors;
-- angular orders used;
-- number of radial-frequency bands;
-- local pool radius;
-- progressive band loading;
+- active-anchor count;
+- angular orders;
+- radial-frequency bands;
+- pool radius;
+- progressive-band loading;
 - early-rejection rate;
 - signal construction cost.
 
-Do **not** assume a full high-order/high-band representation is suitable for all pixels.
-
-#### D. Tiny learned feature
-
-Only after deterministic baselines exist. Keep it small and shared across cameras.
+Do not assume the full high-order/high-band source configuration is appropriate for dense use.
 
 Required comparison:
 
@@ -178,7 +174,7 @@ Required comparison:
 | spherical DSP | | | | | | |
 | tiny learned | | | | | | |
 
-### M5 — NADIR-LAMBDA
+### M5 — NADIR-SEARCH
 
 Benchmark pairwise search variables:
 
@@ -186,60 +182,65 @@ Benchmark pairwise search variables:
 - inverse depth;
 - `lambda = B / d`.
 
-For the lambda formulation, use the native-sphere epipolar hypothesis and Jacobian `J_lambda` to test:
+For the lambda formulation, evaluate native-sphere epipolar hypothesis + `J_lambda` for:
 
 - adaptive coarse spacing;
 - local refinement;
-- conditioning/information scoring;
+- conditioning/Fisher-style information score;
 - candidate-count reduction.
 
-The winner is chosen by latency/robustness Pareto evidence, not elegance.
+Choose the winner by measured latency/robustness Pareto evidence.
 
 ### M6 — NADIR-PAIR
 
-Exploit the three physical camera pairs `01`, `02`, `12` without paying for all three by default.
-
-Policy to test:
-
-1. best pair first;
-2. early exit on sufficient confidence;
-3. second pair if ambiguous;
-4. third pair only as fallback/consistency evidence.
+Exploit physical camera pairs `01`, `02`, `12` without paying for all three by default.
 
 Compare:
 
-- all-pairs always;
-- best-pair only;
-- best-pair-first adaptive;
-- robust 2-of-3 consensus / median;
-- information-weighted fusion;
-- view peeling under explicit occlusion tests.
+```text
+all-pairs always
+best-pair only
+best-pair-first adaptive
+2-of-3 robust consensus / median
+information-weighted fusion
+occlusion-aware peeling/fallback
+```
 
-### M7 — NADIR-MEM
+Candidate runtime policy:
 
-Introduce persistent scene/range memory after a trustworthy spatial measurement exists.
+```text
+best pair first
+-> early exit if sufficient
+-> second pair if ambiguous
+-> third pair only as fallback/consistency evidence
+```
 
-Per retained element store at least:
+### M7 — NADIR-TYPED-STATE
+
+Introduce typed range state before a learned temporal model.
+
+Store at least:
 
 ```text
 range_or_point
-uncertainty
+sigma_sensor
+sigma_model
 timestamp
 age
 observation_count
 source_pair_or_cameras
+status
 static_or_dynamic_state
+optional_modes
 ```
 
-Do not require a dense point cloud every frame. Compare sparse points, surfels and lightweight voxel/hash organization only as needed.
+The state contract must preserve units/frame/provenance where applicable and remain bounded in memory.
 
 ### M8 — NADIR-TEMPORAL
 
-Add geometric temporal propagation before learned temporal models.
+Add geometric temporal propagation using relative `SE(3)`.
 
-Use relative SE(3) to warp previous 3-D/range state into the current rig frame. The resulting prior should narrow the local search interval.
-
-Ablate:
+Compare:
 
 - frame-independent full search;
 - history prior only;
@@ -248,109 +249,190 @@ Ablate:
 
 Primary question: does steady-state P95 latency fall without unacceptable catastrophic errors?
 
-### M9 — NADIR-SCHED
+### M9 — NADIR-SURPRISE
 
-Add event-triggered/adaptive spatial compute allocation.
+Add predictive-coding style innovation before a full scheduler.
 
-Priority signals may include:
+Candidate signals:
 
-- temporal innovation/image change;
+- image/feature residual;
+- Census mismatch;
+- predicted-vs-measured range residual;
+- pair disagreement;
+- normalized surprise such as `epsilon^T Sigma^-1 epsilon` when appropriate.
+
+Do not freeze thresholds from design discussion. Sweep and calibrate them on held-out sequences.
+
+### M10 — NADIR-PROGRESSIVE
+
+Implement progressive compute levels:
+
+```text
+L0 temporal reuse
+L1 cheap consistency / Census
+L2 low-order low-band spherical DSP
+L3 fuller DSP refinement or second pair
+L4 tiny learned fallback if justified
+```
+
+Measure how often each level is entered and whether early exits actually reduce P95 latency.
+
+### M11 — NADIR-SCHED
+
+Add adaptive spatial/deadline scheduling.
+
+Priority candidates:
+
+- surprise;
 - propagated uncertainty;
-- depth discontinuity/local curvature;
+- depth edge/local curvature;
 - newly visible region;
 - stale age;
-- near-range / closing / TTC priority;
+- near-range / TTC priority;
 - pair disagreement.
 
 The AMR analogy is limited to adaptive resolution:
 
 ```text
-smooth/stable -> coarse/reuse
-changing/boundary/uncertain -> refine
+smooth/stable/high-confidence -> coarse/reuse
+changing/boundary/uncertain/new -> refine
 ```
 
-Do not introduce Navier-Stokes/CFD simulation into the depth core.
-
-Required ablation examples:
+Required active-ray ablation examples:
 
 ```text
-100% active rays
+100%
 50%
 25%
 12.5%
 ```
 
-For each case report P95 latency, catastrophic error, near/new recall and rebootstrap rate.
+Report P95 latency, catastrophic error, near/new recall and rebootstrap rate.
 
-### M10 — NADIR-MOTION
+### M12 — NADIR-MEMORY
 
-Add IMU after temporal geometry works camera-only.
+Split memory by timescale:
+
+```text
+sensory ring buffer
+working typed range memory
+optional persistent sparse spatial support
+```
+
+Compare sparse points, surfels and lightweight voxel/hash storage only if needed. Avoid turning NADIR into a general mapping system.
+
+### M13 — NADIR-IMU
+
+Add IMU only after camera/history temporal geometry works.
 
 Use IMU/state information to:
 
 - de-rotate temporal correspondence;
-- improve relative-pose prediction;
-- propagate previous range more accurately;
+- improve pose prediction;
+- stabilize short-term propagation;
 - reduce active search width.
 
-A useful IMU module should reduce total matching compute rather than add a heavy sensor network.
+Success means lower total matching compute / P95 latency at acceptable robustness.
 
-### M11 — NADIR-RTK
+### M14 — NADIR-RTK
 
 Add RTK/GNSS translation constraints with covariance/status-aware gating.
 
-Ablations must separate:
+Ablations:
 
 - camera/history only;
 - + IMU;
 - + IMU + RTK FIX;
-- degraded/FLOAT/LOST GNSS cases.
+- degraded/FLOAT/LOST GNSS.
 
-### M12 — NADIR-EDGE
+### M15 — NADIR-RESIDUAL
+
+Only if deterministic/DSP structure remains insufficient, add a tiny learned residual or uncertainty correction.
+
+Preferred roles:
+
+- local visual residual feature;
+- model mismatch correction;
+- uncertainty calibration;
+- static quality estimation.
+
+Do not let the network relearn calibrated projection/extrinsics.
+
+### M16 — NADIR-EDGE
 
 Deploy and profile the surviving pipeline on the target QCS8550-class device.
 
-Potential accelerated pieces include:
+Potential accelerated pieces:
 
 - static ray/geometry LUT access;
 - image/DSP preprocessing;
-- Census/Hamming or vectorized spherical signal operations;
-- small learned blocks if retained;
-- compact correlation/fusion.
+- Census/Hamming;
+- vectorized spherical signal operations;
+- compact learned blocks if retained;
+- pair consensus / belief update.
 
-Flow for learned components only:
+For learned components only:
 
 ```text
 host baseline
-    ↓
-ONNX
-    ↓
-QNN-compatible graph
-    ↓
-FP16 / PTQ INT8
-    ↓
-QAT INT8 only if necessary
+-> ONNX
+-> QNN-compatible graph
+-> FP16 / PTQ INT8
+-> QAT INT8 only if necessary
 ```
 
 Do not infer target latency from desktop host timings.
+
+### M17 — NADIR-LAW-COMPRESSION (optional, late)
+
+After sufficient runtime logs exist, test whether learned quality/scheduler/uncertainty residuals can be replaced by compact identified or symbolic equations.
+
+Possible tools:
+
+- least squares / recursive least squares;
+- sparse regression;
+- symbolic regression;
+- weak/integral identification where appropriate.
+
+Promotion requirements:
+
+```text
+same or better robustness
+lower runtime cost
+cross-session validation
+dimensional / sign / boundary sanity
+explicit validity region
+```
+
+This is an optional late-stage experiment, not a requirement for the core depth pipeline.
 
 ## 5. Bootstrap / track / rebootstrap contract
 
 ### BOOTSTRAP
 
-Use wider coverage/search to initialize history. It may be slower than steady state but must be separately timed and bounded.
+Use wider coverage/search to initialize typed history. It may be slower than steady state but must be separately timed and bounded.
 
 ### TRACK / UPDATE
 
-Use prediction, narrow search, active anchors, best-pair-first evaluation and early exit.
+Use prediction, narrow search, active anchors, best-pair-first evaluation, progressive evidence and early exit.
 
 ### REBOOTSTRAP
 
-Trigger on confidence/coverage collapse, large scene change, pose jump, excessive dynamics or stale uncertainty.
+Trigger on confidence/coverage collapse, large scene change, pose jump, excessive dynamics, repeated pair disagreement or stale uncertainty.
 
-Report rebootstrap frequency because a fast steady state that constantly reboots is not a useful real-time system.
+Report rebootstrap frequency because a fast steady state that constantly reboots is not useful.
 
-## 6. Acceptance metrics
+## 6. Fail-closed contract
+
+When evidence is insufficient:
+
+```text
+UNKNOWN > fabricated range
+```
+
+Track abstention rate explicitly. A system that is fast only because it silently emits bad depth is rejected.
+
+## 7. Acceptance metrics
 
 Every post-Gate-A experiment should report at least:
 
@@ -363,22 +445,25 @@ active-ray fraction
 mean candidates per active ray
 mean evaluated pairs per active ray
 mean signal bands/channels used
+fraction reusing history
+fraction reaching each progressive level
 bootstrap latency
 steady-state latency
 rebootstrap frequency
 catastrophic-range-error rate
 near/new-structure recall
 coarse range error
+UNKNOWN/abstention rate
 ```
 
-Fine MAE/RMSE/AbsRel may still be reported for diagnosis, but they are not allowed to dominate latency-first decisions.
+Fine MAE/RMSE/AbsRel may still be reported for diagnosis, but they do not dominate latency-first decisions.
 
-## 7. Immediate work order
+## 8. Immediate work order
 
-The architecture has been updated, but the execution order remains conservative:
+The design is frozen on paper, but execution remains conservative:
 
 1. obtain/inspect one actual MVS-GI sample under `/media/nahhao74/KINGSTON`;
 2. run the current Gate A sparse geometry harness without optional filters;
 3. understand geometry/GT residuals and freeze Gate A interpretation;
-4. only after Gate A review, implement the matcher benchmark rather than jumping directly to a dense CNN;
-5. keep `docs/LATENCY_FIRST_ARCHITECTURE.md` as the downstream design reference.
+4. only after Gate A review, implement M0 profiling and the M4 matcher benchmark rather than jumping to a dense CNN;
+5. keep `FINAL_RESEARCH_ARCHITECTURE.md` as the canonical downstream design reference.
