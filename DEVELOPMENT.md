@@ -1,10 +1,15 @@
-# NADIR Development Baseline v0.5 — Gate A + Latency-First Research Direction
+# NADIR Development Baseline v0.6 — Gate A + Canonical Latency-First Architecture
 
 The repository contains substantial geometry/tooling code, but the **scientific pipeline is not yet proven**. Current execution remains intentionally bounded to **Gate A: real-data feasibility and geometry identification for synchronized three-fisheye metric stereo**.
 
-The downstream architecture has been updated on paper to be **latency-first, history-aware and adaptive**, but this does not move the current validation boundary.
+The downstream research architecture is now frozen on paper as a latency-first, history-aware, uncertainty-driven design with typed temporal state and progressive computation. This does **not** move the current validation boundary.
 
-See `docs/VALIDATION_STATUS.md` for authoritative status and `docs/LATENCY_FIRST_ARCHITECTURE.md` for the post-Gate-A research direction.
+Canonical references:
+
+- `docs/FINAL_RESEARCH_ARCHITECTURE.md` — final research architecture hypothesis;
+- `docs/VALIDATION_STATUS.md` — authoritative scientific status;
+- `docs/IMPLEMENTATION_PLAN.md` — staged implementation/benchmark sequence;
+- `docs/LATENCY_FIRST_ARCHITECTURE.md` — earlier latency-first design rationale retained for context.
 
 ## What exists now
 
@@ -18,7 +23,7 @@ See `docs/VALIDATION_STATUS.md` for authoritative status and `docs/LATENCY_FIRST
 - an experimental dense photometric sweep retained only as a later falsification candidate;
 - unit tests + GitHub Actions regression checks.
 
-These code blocks are tooling/prototypes. They do **not** by themselves establish real 3-camera metric depth performance.
+These code blocks are tooling/prototypes. They do **not** by themselves establish real 3-camera metric range performance.
 
 ## Current scientific task
 
@@ -53,59 +58,72 @@ For each camera pair and in aggregate, measure:
 - closest-ray gap;
 - triangulation angle/conditioning;
 - pixel reprojection error;
-- metric depth absolute/relative error against GT;
-- depth error by incidence angle.
+- metric range absolute/relative error against GT;
+- error by incidence angle.
 
 Important incidence regions for the MVS-GI bootstrap include `0–60°`, `60–90°`, and `90–97.5°`. The final target 225° rig additionally requires dedicated evidence for `97.5–112.5°`; MVS-GI cannot supply that evidence.
 
-## Post-Gate-A design priority
-
-If Gate A supports the metric-stereo premise, downstream work uses this priority:
+## Post-Gate-A final design priority
 
 ```text
 1. P95 latency
-2. robustness / catastrophic-error avoidance
-3. coarse metric-range accuracy
+2. robustness / catastrophic near-far error avoidance
+3. coarse metric-range accuracy + near/new-structure recall
 4. fine depth accuracy
 ```
 
-The desired steady-state pipeline is not a dense full-search network on every frame. It is expected to combine:
+The canonical runtime principle is:
+
+```text
+PREDICT
+-> VERIFY CHEAPLY
+-> SPEND COMPUTE ONLY WHERE INFORMATION IS NEEDED
+-> STOP AS SOON AS RANGE IS GOOD ENOUGH
+```
+
+The expected downstream structure combines:
 
 - native fisheye RayLUT/solid-angle geometry;
-- persistent range + uncertainty memory;
-- IMU/RTK pose-conditioned prediction;
-- active-region scheduling;
-- best-pair-first evaluation across pairs `01`, `02`, `12`;
-- a low-cost local measurement engine;
-- early exit and robust pair consensus;
-- local refinement only where information/uncertainty justifies the latency.
+- fast sensory ring buffer;
+- typed range state carrying uncertainty, timestamp, source and status;
+- relative-SE(3) temporal prediction;
+- predictive innovation/surprise;
+- deadline-aware active-region scheduling;
+- progressive measurement complexity;
+- best-pair-first evaluation across `01`, `02`, `12`;
+- local deterministic DSP before learned fallback;
+- explicit sensor/model uncertainty;
+- multi-timescale range/spatial memory;
+- fail-closed `UNKNOWN` behavior;
+- bounded bootstrap/track/rebootstrap state machine.
 
-Candidate local measurement engines after Gate A are:
+Selected LAWGRAPH ideas are used only as architecture principles useful to depth: equation-first geometry, typed state, predictive coding, event-driven compute, progressive complexity, multi-timescale memory, learned residuals only for unresolved structure, and optional later equation/parameter compression.
 
-- Census/Hamming;
-- local spherical harmonic/Fourier-Bessel DSP signal;
-- tiny learned features only if they beat deterministic baselines on the latency/robustness Pareto frontier.
-
-A reviewed spherical DSP matcher contributes useful hypotheses such as native ray + solid-angle lookup, `lambda = B/d` search, Jacobian-driven spacing, progressive band loading, analytic noise estimates and explicit rejection states. None of those results are transferred into NADIR as evidence until reproduced in this repository.
+NADIR does **not** become a general world model, controller, planner, CFD solver or Navier-Stokes simulator.
 
 ## Frozen downstream hypotheses
 
 The following remain **not accepted milestones** before Gate A owner review:
 
-- spherical DSP matcher for NADIR;
-- Census/Hamming dense/local matcher;
+- RayLUT + solid-angle runtime contract for NADIR;
+- spherical DSP matcher;
+- Census/Hamming local matcher;
 - `lambda = B/d` search;
 - Fisher/Jacobian candidate allocation;
 - best-pair-first / 3-pair consensus / peeling;
-- persistent temporal range memory;
+- typed temporal range state;
+- predictive surprise / event-triggered compute;
+- progressive matcher complexity;
+- persistent/multi-timescale range memory;
 - adaptive active-ray/AMR-like scheduling;
-- shared CNN/ResNet/attention feature encoders;
+- learned residual/uncertainty correction;
 - IMU/RTK temporal priors;
+- optional symbolic/parameter compression;
 - QCS8550/QNN deployment claims.
 
 The existing dense photometric code remains `HYPOTHESIS_NOT_VALIDATED`; it should not be interpreted as the final NADIR algorithm.
 
-## Coordinate/semantic contract
+## Coordinate / semantic contract
 
 - Navigation/global state: NED when navigation is introduced later.
 - UAV body/rig: FRD (`+X forward`, `+Y right`, `+Z down`).
@@ -119,13 +137,11 @@ The existing dense photometric code remains `HYPOTHESIS_NOT_VALIDATED`; it shoul
 
 Current engineering targets, not measured claims:
 
-- hard: >= 15 FPS and P95 capture-to-depth < 80 ms;
-- design: >= 20 FPS and P95 < 60 ms;
-- stretch: 30 FPS.
+- hard: `>= 15 FPS` and P95 capture-to-range `< 80 ms`;
+- design: `>= 20 FPS` and P95 `< 60 ms`;
+- stretch: `30 FPS`.
 
-Later experiments must report P50/P95 latency, active-ray fraction, candidates per active ray, evaluated pairs per active ray, signal bands/channels, bootstrap vs steady-state latency, catastrophic-range-error rate and near/new-structure recall.
-
-The AMR/CFD analogy is limited to adaptive spatial resolution. NADIR does **not** solve Navier-Stokes or use aerodynamic CFD in its depth core.
+Later experiments must report P50/P95 latency, active-ray fraction, candidates per active ray, evaluated pairs per active ray, signal bands/channels, history-reuse fraction, progressive-level distribution, bootstrap vs steady-state latency, rebootstrap frequency, catastrophic-range-error rate, near/new-structure recall and `UNKNOWN`/abstention rate.
 
 ## Current validation level
 
@@ -133,9 +149,10 @@ The AMR/CFD analogy is limited to adaptive spatial resolution. NADIR does **not*
 - projection/transform/triangulation mathematics: unit/synthetic tested;
 - real MVS-GI sparse metric-stereo evidence: **not yet produced**;
 - exact 225° real evidence: **not available**;
-- spherical DSP/Census/tiny-CNN matcher comparison: **not measured**;
-- temporal/history scheduler benefit: **not measured**;
+- matcher benchmark: **not measured**;
+- typed history / predictive surprise / scheduler benefit: **not measured**;
 - IMU/RTK compute reduction: **not measured**;
+- learned residual benefit: **not measured**;
 - QCS8550 latency/FPS: **not measured**.
 
 Therefore the scientific status remains:
@@ -153,4 +170,4 @@ GATE_A_NOT_YET_PROVEN
 5. inspect failure distributions and only then propose explicit filters/acceptance criteria;
 6. repeat on a small representative sample set after the single-sample interpretation is understood;
 7. owner reviews Gate A evidence;
-8. only then begin the latency-first matcher benchmark described in `docs/IMPLEMENTATION_PLAN.md`.
+8. only then begin the latency-first staged benchmarks in `docs/IMPLEMENTATION_PLAN.md`.
