@@ -8,9 +8,11 @@ The active task is:
 
 > **Gate A — real-data feasibility and geometry identification for synchronized three-fisheye metric stereo.**
 
-The scientific question is whether known camera models + known camera-center baselines + real multi-view correspondences can produce metric 3-D/radial depth that is consistent with ground truth, and how that consistency changes with range, viewing angle and triangulation conditioning.
+The scientific question is whether known camera models + known camera-center baselines + real multi-view correspondences can produce metric 3-D/radial range that is consistent with ground truth, and how that consistency changes with range, viewing angle and triangulation conditioning.
 
-Until Gate A is reviewed and accepted, downstream adaptive/DSP/learned architecture is not promoted.
+Until Gate A is reviewed and accepted, downstream adaptive/DSP/temporal/learned architecture is not promoted.
+
+`FINAL_RESEARCH_ARCHITECTURE.md` is the canonical design document. This file remains authoritative for **what has actually been proven**.
 
 ## Status vocabulary
 
@@ -26,7 +28,7 @@ Until Gate A is reviewed and accepted, downstream adaptive/DSP/learned architect
 | --- | --- | --- |
 | MVS-GI file/metadata semantics | `SOURCE_VERIFIED` | Loader follows released layout/source semantics. |
 | MVS-GI compressed float distance decoding | `SOURCE_VERIFIED` + `MATH_UNIT_VERIFIED` | Byte reinterpretation and tests exist; real payload still needs execution in the target workflow. |
-| MVS-GI raw distance meaning | `SOURCE_VERIFIED` | Released `RayMaker.make_rays_from_grid_distance` multiplies unit native-camera rays by the provided distance values, so the raw distance image is used as radial range along the reference camera ray, not camera-Z depth. |
+| MVS-GI raw distance meaning | `SOURCE_VERIFIED` | Released `RayMaker.make_rays_from_grid_distance` multiplies unit native-camera rays by the provided distance values, so raw distance is treated as radial range along the reference ray, not camera-Z depth. |
 | LinearSphere/DoubleSphere projection | `MATH_UNIT_VERIFIED` | Round-trip and >90° geometry tests exist. This does not prove real-lens calibration quality. |
 | Frame graph / extrinsics | `MATH_UNIT_VERIFIED` | Transform convention is implemented and tested; real-data residuals are not yet characterized. |
 | Generalized two-ray triangulation | `MATH_UNIT_VERIFIED` | Synthetic intersections/degenerate rays are tested. |
@@ -34,13 +36,19 @@ Until Gate A is reviewed and accepted, downstream adaptive/DSP/learned architect
 | Dense photometric sphere sweep | `HYPOTHESIS_NOT_VALIDATED` | Frozen as a later candidate; not an accepted NADIR depth algorithm. |
 | Native RayLUT + solid-angle representation | `HYPOTHESIS_NOT_VALIDATED` | Downstream design candidate; exact NADIR contract/performance not yet implemented/measured. |
 | Census/Hamming local matcher | `HYPOTHESIS_NOT_VALIDATED` | Candidate low-cost DSP matcher after Gate A. |
-| Local spherical harmonic/Fourier-Bessel matcher | `HYPOTHESIS_NOT_VALIDATED` | Ideas reviewed from an external/internal source document; not yet reproduced as NADIR evidence. |
+| Local spherical harmonic/Fourier-Bessel matcher | `HYPOTHESIS_NOT_VALIDATED` | Reviewed external/internal idea; not yet reproduced as NADIR evidence. |
 | `lambda = B/d` pairwise search | `HYPOTHESIS_NOT_VALIDATED` | Candidate search coordinate to compare with direct depth/inverse depth. |
 | Jacobian/Fisher-guided candidate allocation | `HYPOTHESIS_NOT_VALIDATED` | Candidate mechanism for reducing search; no NADIR runtime/accuracy evidence yet. |
-| Best-pair-first / 3-pair consensus / peeling | `HYPOTHESIS_NOT_VALIDATED` | Candidate three-camera compute/fusion strategy; occlusion failure modes still require testing. |
+| Best-pair-first / 3-pair consensus / peeling | `HYPOTHESIS_NOT_VALIDATED` | Candidate three-camera compute/fusion strategy; occlusion failure modes require testing. |
+| Typed range state `(range, uncertainty, time, source, status)` | `HYPOTHESIS_NOT_VALIDATED` | LAWGRAPH-inspired state contract for temporal scheduling; not implemented/validated. |
+| Predictive coding / normalized surprise | `HYPOTHESIS_NOT_VALIDATED` | Candidate trigger using observed-vs-predicted evidence; exact residual/statistic not frozen. |
+| Progressive compute levels | `HYPOTHESIS_NOT_VALIDATED` | Candidate hierarchy: reuse -> cheap check -> DSP refine -> learned fallback. |
 | Persistent temporal range/uncertainty memory | `HYPOTHESIS_NOT_VALIDATED` | Candidate steady-state compute reduction mechanism. |
+| Multi-timescale sensory/working/spatial memory | `HYPOTHESIS_NOT_VALIDATED` | Candidate bounded-memory organization; no runtime evidence yet. |
 | Adaptive active-ray / AMR-like scheduler | `HYPOTHESIS_NOT_VALIDATED` | Numerical compute-allocation analogy only; no Navier-Stokes/CFD solver is proposed. |
-| Learned CNN/groupwise MVS | `HYPOTHESIS_NOT_VALIDATED` | Candidate only if deterministic baselines are insufficient on the Pareto frontier. |
+| Learned residual/uncertainty correction | `HYPOTHESIS_NOT_VALIDATED` | Candidate role for a small network after deterministic structure; not an accepted direct-depth model. |
+| Offline parameter/symbolic compression | `HYPOTHESIS_NOT_VALIDATED` | Late optional idea to replace learned quality/scheduler residuals with compact validated equations; not current scope. |
+| Learned CNN/groupwise MVS | `HYPOTHESIS_NOT_VALIDATED` | Candidate only if deterministic baselines are insufficient on the latency/robustness Pareto frontier. |
 | Exact 225° target rig/data | not measured | MVS-GI ~195° cannot validate the 97.5°–112.5° annulus. |
 | IMU/RTK temporal priors | not implemented/validated | Out of current Gate A scope; later goal is search compression/de-rotation, not arbitrary sensor concatenation. |
 | QCS8550/QNN deployment | not implemented/validated | No onboard FPS/latency claim is allowed yet. |
@@ -85,7 +93,7 @@ A reviewable Gate A report should contain at least:
 - closest-ray gap distribution;
 - triangulation-angle distribution;
 - reprojection-error distribution;
-- metric depth absolute/relative error against GT;
+- metric range absolute/relative error against GT;
 - error stratified by incidence bins, especially `0–60°`, `60–90°`, and `>90°` for the MVS-GI bootstrap;
 - exact matcher/filter parameters;
 - clear separation between source-derived parameters and experiment-chosen parameters;
@@ -95,16 +103,23 @@ Gate A remains `NOT_YET_PROVEN` until real payload results exist and the owner r
 
 ## Downstream priority if Gate A is supported
 
-The post-Gate-A architecture is explicitly latency-first:
-
 ```text
 1. P95 latency
-2. robustness / catastrophic-error avoidance
-3. coarse metric-range accuracy
+2. robustness / catastrophic near-far error avoidance
+3. coarse metric-range accuracy + near/new-structure recall
 4. fine depth accuracy
 ```
 
-Candidate downstream work must be evaluated as a falsification sequence, not promoted from design discussion alone. See `LATENCY_FIRST_ARCHITECTURE.md` and `IMPLEMENTATION_PLAN.md`.
+The canonical downstream principle is:
+
+```text
+predict
+-> verify cheaply
+-> spend compute only where information is needed
+-> stop when range is good enough
+```
+
+Candidate downstream work must be evaluated as a falsification sequence, not promoted from design discussion alone.
 
 ## Explicitly out of scope until Gate A review
 
@@ -114,13 +129,15 @@ Do not promote or optimize as accepted pipeline blocks:
 - Census/Hamming or spherical DSP matchers;
 - `lambda = B/d` search or Fisher/Jacobian scheduling;
 - best-pair-first / 3-pair consensus / peeling;
-- persistent temporal range memory;
+- typed temporal state and predictive surprise;
+- progressive matcher complexity;
+- persistent/multi-timescale range memory;
 - adaptive active-ray/event-triggered scheduling;
+- learned residual/quality/uncertainty modules;
 - CNN/ResNet/attention feature encoders;
-- geometry-informed learned candidate selection;
-- learned camera-quality weighting;
 - IMU/RTK temporal fusion;
 - recurrent/temporal neural models;
+- symbolic/SINDy-style runtime-law compression;
 - final 225° claims;
 - QCS8550/QNN performance claims.
 
@@ -139,12 +156,15 @@ active-ray fraction
 mean candidates per active ray
 mean evaluated camera pairs per active ray
 mean signal bands/channels used
+fraction reusing history
+fraction reaching each progressive-compute level
 bootstrap latency
 steady-state latency
 rebootstrap frequency
 catastrophic-range-error rate
 near/new-structure recall
 coarse range error
+UNKNOWN/abstention rate
 ```
 
 Fine MAE/RMSE/AbsRel may still be diagnostic metrics, but they do not override latency-first decisions.
