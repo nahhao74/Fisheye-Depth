@@ -10,7 +10,7 @@ The active task is:
 
 The scientific question is whether known camera models + known camera-center baselines + real multi-view correspondences can produce metric 3-D/radial depth that is consistent with ground truth, and how that consistency changes with range, viewing angle and triangulation conditioning.
 
-Until Gate A is reviewed and accepted, downstream dense/learned architecture is not promoted.
+Until Gate A is reviewed and accepted, downstream adaptive/DSP/learned architecture is not promoted.
 
 ## Status vocabulary
 
@@ -32,10 +32,17 @@ Until Gate A is reviewed and accepted, downstream dense/learned architecture is 
 | Generalized two-ray triangulation | `MATH_UNIT_VERIFIED` | Synthetic intersections/degenerate rays are tested. |
 | Sparse ORB matching | `HYPOTHESIS_NOT_VALIDATED` | Gate A falsification baseline only. |
 | Dense photometric sphere sweep | `HYPOTHESIS_NOT_VALIDATED` | Frozen as a later candidate; not an accepted NADIR depth algorithm. |
-| K=4/8/16/32 candidate selection | `HYPOTHESIS_NOT_VALIDATED` | Do not optimize until Gate A supports metric stereo feasibility. |
-| Learned CNN/groupwise MVS | `HYPOTHESIS_NOT_VALIDATED` | Out of current task scope. |
+| Native RayLUT + solid-angle representation | `HYPOTHESIS_NOT_VALIDATED` | Downstream design candidate; exact NADIR contract/performance not yet implemented/measured. |
+| Census/Hamming local matcher | `HYPOTHESIS_NOT_VALIDATED` | Candidate low-cost DSP matcher after Gate A. |
+| Local spherical harmonic/Fourier-Bessel matcher | `HYPOTHESIS_NOT_VALIDATED` | Ideas reviewed from an external/internal source document; not yet reproduced as NADIR evidence. |
+| `lambda = B/d` pairwise search | `HYPOTHESIS_NOT_VALIDATED` | Candidate search coordinate to compare with direct depth/inverse depth. |
+| Jacobian/Fisher-guided candidate allocation | `HYPOTHESIS_NOT_VALIDATED` | Candidate mechanism for reducing search; no NADIR runtime/accuracy evidence yet. |
+| Best-pair-first / 3-pair consensus / peeling | `HYPOTHESIS_NOT_VALIDATED` | Candidate three-camera compute/fusion strategy; occlusion failure modes still require testing. |
+| Persistent temporal range/uncertainty memory | `HYPOTHESIS_NOT_VALIDATED` | Candidate steady-state compute reduction mechanism. |
+| Adaptive active-ray / AMR-like scheduler | `HYPOTHESIS_NOT_VALIDATED` | Numerical compute-allocation analogy only; no Navier-Stokes/CFD solver is proposed. |
+| Learned CNN/groupwise MVS | `HYPOTHESIS_NOT_VALIDATED` | Candidate only if deterministic baselines are insufficient on the Pareto frontier. |
 | Exact 225° target rig/data | not measured | MVS-GI ~195° cannot validate the 97.5°–112.5° annulus. |
-| IMU/RTK temporal priors | not implemented/validated | Out of current Gate A scope. |
+| IMU/RTK temporal priors | not implemented/validated | Out of current Gate A scope; later goal is search compression/de-rotation, not arbitrary sensor concatenation. |
 | QCS8550/QNN deployment | not implemented/validated | No onboard FPS/latency claim is allowed yet. |
 
 ## Gate A experiment
@@ -86,11 +93,29 @@ A reviewable Gate A report should contain at least:
 
 Gate A remains `NOT_YET_PROVEN` until real payload results exist and the owner reviews a frozen acceptance criterion. The harness must not declare PASS on its own.
 
+## Downstream priority if Gate A is supported
+
+The post-Gate-A architecture is explicitly latency-first:
+
+```text
+1. P95 latency
+2. robustness / catastrophic-error avoidance
+3. coarse metric-range accuracy
+4. fine depth accuracy
+```
+
+Candidate downstream work must be evaluated as a falsification sequence, not promoted from design discussion alone. See `LATENCY_FIRST_ARCHITECTURE.md` and `IMPLEMENTATION_PLAN.md`.
+
 ## Explicitly out of scope until Gate A review
 
-Do not promote or optimize:
+Do not promote or optimize as accepted pipeline blocks:
 
 - dense photometric sphere sweep as the final method;
+- Census/Hamming or spherical DSP matchers;
+- `lambda = B/d` search or Fisher/Jacobian scheduling;
+- best-pair-first / 3-pair consensus / peeling;
+- persistent temporal range memory;
+- adaptive active-ray/event-triggered scheduling;
 - CNN/ResNet/attention feature encoders;
 - geometry-informed learned candidate selection;
 - learned camera-quality weighting;
@@ -100,6 +125,29 @@ Do not promote or optimize:
 - QCS8550/QNN performance claims.
 
 These may remain documented as future hypotheses, but they are not current implementation milestones.
+
+## Runtime policy for future experiments
+
+Once Gate A permits downstream execution, every experiment must report at least:
+
+```text
+P50 total latency
+P95 total latency
+FPS
+peak memory
+active-ray fraction
+mean candidates per active ray
+mean evaluated camera pairs per active ray
+mean signal bands/channels used
+bootstrap latency
+steady-state latency
+rebootstrap frequency
+catastrophic-range-error rate
+near/new-structure recall
+coarse range error
+```
+
+Fine MAE/RMSE/AbsRel may still be diagnostic metrics, but they do not override latency-first decisions.
 
 ## Data/storage note
 
