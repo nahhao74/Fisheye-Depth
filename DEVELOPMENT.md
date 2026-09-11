@@ -1,8 +1,10 @@
-# NADIR Development Baseline v0.4 — Gate A
+# NADIR Development Baseline v0.5 — Gate A + Latency-First Research Direction
 
-The repository contains substantial geometry/tooling code, but the **scientific pipeline is not yet proven**. Current work is intentionally bounded to **Gate A: real-data feasibility and geometry identification for synchronized three-fisheye metric stereo**.
+The repository contains substantial geometry/tooling code, but the **scientific pipeline is not yet proven**. Current execution remains intentionally bounded to **Gate A: real-data feasibility and geometry identification for synchronized three-fisheye metric stereo**.
 
-See `docs/VALIDATION_STATUS.md` for the authoritative status vocabulary and task boundary.
+The downstream architecture has been updated on paper to be **latency-first, history-aware and adaptive**, but this does not move the current validation boundary.
+
+See `docs/VALIDATION_STATUS.md` for authoritative status and `docs/LATENCY_FIRST_ARCHITECTURE.md` for the post-Gate-A research direction.
 
 ## What exists now
 
@@ -56,19 +58,52 @@ For each camera pair and in aggregate, measure:
 
 Important incidence regions for the MVS-GI bootstrap include `0–60°`, `60–90°`, and `90–97.5°`. The final target 225° rig additionally requires dedicated evidence for `97.5–112.5°`; MVS-GI cannot supply that evidence.
 
+## Post-Gate-A design priority
+
+If Gate A supports the metric-stereo premise, downstream work uses this priority:
+
+```text
+1. P95 latency
+2. robustness / catastrophic-error avoidance
+3. coarse metric-range accuracy
+4. fine depth accuracy
+```
+
+The desired steady-state pipeline is not a dense full-search network on every frame. It is expected to combine:
+
+- native fisheye RayLUT/solid-angle geometry;
+- persistent range + uncertainty memory;
+- IMU/RTK pose-conditioned prediction;
+- active-region scheduling;
+- best-pair-first evaluation across pairs `01`, `02`, `12`;
+- a low-cost local measurement engine;
+- early exit and robust pair consensus;
+- local refinement only where information/uncertainty justifies the latency.
+
+Candidate local measurement engines after Gate A are:
+
+- Census/Hamming;
+- local spherical harmonic/Fourier-Bessel DSP signal;
+- tiny learned features only if they beat deterministic baselines on the latency/robustness Pareto frontier.
+
+A reviewed spherical DSP matcher contributes useful hypotheses such as native ray + solid-angle lookup, `lambda = B/d` search, Jacobian-driven spacing, progressive band loading, analytic noise estimates and explicit rejection states. None of those results are transferred into NADIR as evidence until reproduced in this repository.
+
 ## Frozen downstream hypotheses
 
-The following code/ideas are **not accepted milestones yet** and must not be promoted before Gate A owner review:
+The following remain **not accepted milestones** before Gate A owner review:
 
-- dense photometric sphere sweep;
-- `K=4/8/16/32` candidate optimization;
+- spherical DSP matcher for NADIR;
+- Census/Hamming dense/local matcher;
+- `lambda = B/d` search;
+- Fisher/Jacobian candidate allocation;
+- best-pair-first / 3-pair consensus / peeling;
+- persistent temporal range memory;
+- adaptive active-ray/AMR-like scheduling;
 - shared CNN/ResNet/attention feature encoders;
-- geometry-informed learned candidate selection;
-- learned camera-quality weighting;
 - IMU/RTK temporal priors;
 - QCS8550/QNN deployment claims.
 
-The existing dense photometric code remains in the repository as `HYPOTHESIS_NOT_VALIDATED`; it should not be interpreted as the final NADIR algorithm.
+The existing dense photometric code remains `HYPOTHESIS_NOT_VALIDATED`; it should not be interpreted as the final NADIR algorithm.
 
 ## Coordinate/semantic contract
 
@@ -77,7 +112,20 @@ The existing dense photometric code remains in the repository as `HYPOTHESIS_NOT
 - Each camera retains its native calibrated frame.
 - `T_C_B` maps Body/Rig points into a camera frame.
 - Sparse triangulation uses distinct physical camera centers; cameras are never collapsed to a single optical center.
-- Final dense depth semantics remain radial range from the chosen rig reference origin, but dense promotion waits for Gate A evidence.
+- Fisheye RGB is not flattened/panoramically stitched before stereo.
+- Final depth/range semantics remain radial range from the chosen rig reference origin.
+
+## Runtime contract for later stages
+
+Current engineering targets, not measured claims:
+
+- hard: >= 15 FPS and P95 capture-to-depth < 80 ms;
+- design: >= 20 FPS and P95 < 60 ms;
+- stretch: 30 FPS.
+
+Later experiments must report P50/P95 latency, active-ray fraction, candidates per active ray, evaluated pairs per active ray, signal bands/channels, bootstrap vs steady-state latency, catastrophic-range-error rate and near/new-structure recall.
+
+The AMR/CFD analogy is limited to adaptive spatial resolution. NADIR does **not** solve Navier-Stokes or use aerodynamic CFD in its depth core.
 
 ## Current validation level
 
@@ -85,10 +133,12 @@ The existing dense photometric code remains in the repository as `HYPOTHESIS_NOT
 - projection/transform/triangulation mathematics: unit/synthetic tested;
 - real MVS-GI sparse metric-stereo evidence: **not yet produced**;
 - exact 225° real evidence: **not available**;
-- learned depth accuracy: **not measured**;
+- spherical DSP/Census/tiny-CNN matcher comparison: **not measured**;
+- temporal/history scheduler benefit: **not measured**;
+- IMU/RTK compute reduction: **not measured**;
 - QCS8550 latency/FPS: **not measured**.
 
-Therefore the scientific status is currently:
+Therefore the scientific status remains:
 
 ```text
 GATE_A_NOT_YET_PROVEN
@@ -102,4 +152,5 @@ GATE_A_NOT_YET_PROVEN
 4. run `scripts/run_gate_a_sparse.py` on exactly one sample with no optional geometry thresholds first;
 5. inspect failure distributions and only then propose explicit filters/acceptance criteria;
 6. repeat on a small representative sample set after the single-sample interpretation is understood;
-7. owner reviews Gate A evidence before any dense/learned architecture is promoted.
+7. owner reviews Gate A evidence;
+8. only then begin the latency-first matcher benchmark described in `docs/IMPLEMENTATION_PLAN.md`.
