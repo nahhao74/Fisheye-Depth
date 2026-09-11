@@ -1,312 +1,383 @@
-# NADIR Architecture Specification
+# NADIR Architecture Specification v1.0
 
-## 1. Scientific status and problem definition
+## 1. Status
 
-NADIR targets a fast metric radial-range field from a synchronized three-camera fisheye rig mounted on a UAV.
+NADIR targets fast approximate metric radial range from a synchronized three-camera fisheye UAV rig.
 
-The final architecture in this document is **not yet scientifically accepted**. The current active task remains Gate A real-data geometry feasibility; see `VALIDATION_STATUS.md`.
+This specification is a **research architecture hypothesis**, not an accepted scientific result. The active task remains:
 
-Inputs at time `t` may eventually include:
+```text
+GATE_A_NOT_YET_PROVEN
+```
 
-- `I_t^0, I_t^1, I_t^2`: native fisheye RGB images;
-- fixed camera intrinsics/extrinsics;
-- IMU measurements/state;
-- GNSS/RTK position/velocity and covariance when available;
-- persistent previous range/depth state when temporal inference is enabled.
-
-Primary output semantics remain radial range from a selected rig reference origin:
-
-`P_i = O_R + rho_i r_i`, with `||r_i|| = 1`.
-
-The deployment objective is **coarse-but-useful metric range with low tail latency**, not absolute maximum depth precision.
+`FINAL_RESEARCH_ARCHITECTURE.md` is the canonical full architecture. `VALIDATION_STATUS.md` is authoritative for proven status.
 
 ## 2. Optimization priority
 
-Architecture decisions are evaluated in this order:
+```text
+1. P95 end-to-end latency
+2. robustness / catastrophic near-far error avoidance
+3. coarse metric-range accuracy + near/new-structure recall
+4. fine depth accuracy
+```
 
-1. P95 end-to-end latency;
-2. robustness and catastrophic-error avoidance;
-3. coarse metric-range accuracy and near/new-structure recall;
-4. fine depth accuracy.
+A fine-accuracy improvement that materially worsens P95 latency is rejected unless isolated to a bounded low-rate path.
 
-A fine-accuracy improvement that materially worsens P95 latency is rejected unless it belongs to a low-rate bootstrap/background path.
+## 3. Coordinate and output semantics
 
-## 3. Coordinate frames
+- navigation/global: NED;
+- body/rig: FRD;
+- cameras: native calibrated frames;
+- depth matching: native generalized-camera ray geometry;
+- temporal motion: relative `SE(3)` derived from navigation state.
 
-Freeze the following convention:
+Output:
 
-- global/navigation frame: **NED** (`X=North, Y=East, Z=Down`);
-- vehicle/rig frame: **FRD/body** (`X=Forward, Y=Right, Z=Down`);
-- camera frames: native calibrated camera coordinates;
-- depth matching: performed in camera/rig ray geometry without panorama flattening;
-- temporal navigation state: represented in NED and converted to relative SE(3) before entering the depth pipeline.
+```text
+P_i = O_R + rho_i r_i,   ||r_i|| = 1
+```
 
-Raw IMU remains in body coordinates. RTK/GNSS is converted to a local NED frame. The navigation layer estimates `T_NB(t)`. The depth layer consumes relative motion such as
-
-`T_Bt_Bt-1 = inv(T_NB(t)) * T_NB(t-1)`.
+where `rho_i` is radial range from selected rig reference origin `O_R`.
 
 ## 4. Native fisheye contract
 
-The three RGB images must not be blended, stitched, globally rectified or flattened into a single panorama before stereo.
+Do not blend, stitch, globally rectify or flatten the three RGB views before stereo.
 
-For each camera, calibration may be compiled into a lookup:
+Per-camera calibration may be compiled into:
 
 ```text
 RayLUT[c, pixel] = {
     ray_C,
     solid_angle,
     valid,
-    optional_quality
+    optional_static_quality
 }
 ```
 
-This permits downstream processing to become camera-model agnostic while retaining distinct physical camera centers and therefore parallax.
+Downstream modules may become camera-model agnostic only after this calibrated ray representation, while preserving camera identity and physical center.
 
-Candidate calibrated models include Double Sphere, Kannala-Brandt/equidistant, EUCM and other central fisheye models that survive real reprojection validation beyond 90° incidence.
-
-## 5. Spatial geometry and observability
-
-For every ray/region, precompute or cheaply query:
-
-- visible cameras;
-- available camera pairs;
-- effective baseline;
-- triangulation angle / conditioning;
-- lens-incidence region;
-- projection validity;
-- optional static optical/calibration quality.
-
-A compact 3-bit visibility mask is sufficient for three cameras. Bitmasks are an engineering representation, not an accuracy contribution by themselves.
-
-Stereo observability is a geometric condition. Overlap alone is insufficient if the effective baseline or triangulation angle is weak.
-
-## 6. Pairwise search coordinate
-
-For pair `(i,j)`, a candidate search coordinate to benchmark is
-
-`lambda = B_ij / d`,
-
-where `B_ij = ||t_ji||` is the physical pair baseline and `d` is range along the tested source ray/scene point convention.
-
-The corresponding native-sphere pair hypothesis is
-
-`q_j(lambda) = normalize(R_ji q_i + lambda * t_hat_ji)`.
-
-Its Jacobian
-
-`J_lambda = d q_j / d lambda`
-
-is useful for:
-
-- adaptive coarse-step spacing;
-- local refinement;
-- conditioning/information scoring;
-- deciding whether additional candidates are worth their latency.
-
-This formulation must be benchmarked against direct radial-depth and inverse-depth search before promotion.
-
-## 7. Candidate local measurement engines
-
-NADIR no longer assumes that a learned encoder is the default first solution. Three candidate classes should be compared on the same native-ray geometry.
-
-### 7.1 Census / Hamming
-
-A cheap DSP-friendly baseline. Project a 3-D/range hypothesis into the native cameras, then compare local Census descriptors using XOR/popcount-style cost.
-
-### 7.2 Local spherical DSP signal
-
-A reviewed spherical matcher suggests summarizing local native-fisheye neighborhoods around an anchor `q` into steerable complex coefficients `W_{m,n}` over angular order and radial-frequency band.
-
-Potential advantages:
-
-- no image flattening;
-- local gauge rotation can be handled analytically;
-- progressive frequency-band loading;
-- analytic measurement-noise propagation;
-- coarse search followed by local refinement;
-- explicit early failure instead of fabricated depth.
-
-The full high-order/high-band representation may be too expensive if computed for every anchor. NADIR therefore treats it as an **active-anchor local measurement engine**, not a dense full-frame transform by default.
-
-### 7.3 Tiny learned feature
-
-A small shared encoder remains a candidate only if it improves the latency/robustness Pareto frontier over deterministic DSP baselines. Large 3-D CNN cost volumes are not the default direction.
-
-No measurement engine is currently accepted.
-
-## 8. Persistent temporal memory
-
-The intended steady-state pipeline is not frame-independent. A retained scene element should carry at least:
+## 5. Canonical layered structure
 
 ```text
-range_or_point
-uncertainty
-timestamp
-age
-observation_count
-source_camera_or_pair
-static_or_dynamic_state
-optional_multimodal_hypotheses
+L0 Geometry / static law layer
+   RayLUT + extrinsics + visibility + conditioning
+
+L1 Fast sensory buffer
+   current native images + timestamps + IMU synchronization
+
+L2 Typed temporal predictor
+   previous range/point + uncertainty + source + age + relative SE(3)
+
+L3 Surprise / uncertainty / deadline scheduler
+   decide WHEN / WHERE / HOW MUCH to compute
+
+L4 Local native-ray measurement
+   reuse / Census-Hamming / spherical DSP / tiny learned fallback
+   + direct-depth / inverse-depth / lambda search
+
+L5 Three-camera pair manager
+   best pair first -> second if ambiguous -> third fallback
+
+L6 Belief update
+   range + sensor noise + model error + status/provenance
+
+L7 Multi-timescale memory
+   sensory ring buffer + working range memory + persistent sparse support
+
+L8 Runtime assurance / rebootstrap
+   fail-closed UNKNOWN + stale/OOD/pose-jump/scene-change handling
 ```
 
-Given previous point/range state and relative pose, propagate it into the current rig frame to obtain a prior range/search interval.
+The matcher is one component. The primary architecture goal is to avoid invoking expensive matching unnecessarily.
 
-Confidence must increase or decrease according to actual evidence and must decay with age/model uncertainty so history cannot remain trusted indefinitely.
+## 6. Equation-first / structured-compute rule
 
-## 9. IMU and RTK/GNSS conditioning
+Known structure should be implemented directly:
 
-IMU/RTK are intended to reduce search complexity rather than merely add sensor channels to a network.
+- camera projection/unprojection;
+- baselines and extrinsics;
+- visibility;
+- `SE(3)` temporal transforms;
+- pairwise epipolar/native-sphere geometry;
+- basic covariance propagation.
 
-IMU is expected to be strongest for short-term rotation/de-rotation. Accelerometer-only translation integration is not trusted without an estimator because of drift.
+A learned model is reserved for unresolved visual/model residuals or uncertainty correction if deterministic methods are insufficient.
 
-RTK/GNSS is confidence-gated:
+## 7. Typed range state
 
-- FIX: narrow metric translation prior when covariance supports it;
-- FLOAT: broaden the search according to uncertainty;
-- LOST/unreliable: do not constrain stereo with RTK.
-
-A useful sensor contribution should reduce active search while maintaining robustness.
-
-## 10. Latency-budgeted scheduler
-
-Before expensive matching, NADIR should decide:
+Candidate state contract:
 
 ```text
-WHEN must this region be recomputed?
-WHERE should compute be spent?
-HOW MUCH evidence is sufficient?
+RangeState_i = {
+    ray_or_point,
+    range,
+    sigma_sensor,
+    sigma_model,
+    timestamp,
+    age,
+    observation_count,
+    source_pair_or_cameras,
+    status,
+    static_or_dynamic_state,
+    optional_modes
+}
 ```
 
-Candidate scheduler signals:
+This state is used for future prediction and scheduling, not merely logging.
 
-- temporal innovation/image change;
-- propagated range uncertainty;
-- depth discontinuity/local curvature;
+## 8. Temporal prediction
+
+Given previous point/range state and relative pose:
+
+```text
+P_t^- = T_Bt_Bt-1 * P_t-1
+rho_t^- = ||P_t^-||
+r_t^- = P_t^- / ||P_t^-||
+```
+
+The temporal prior should reduce search width and/or active-ray count.
+
+IMU is expected to help short-term rotation/de-rotation. RTK/GNSS is covariance/status gated for metric translation support.
+
+## 9. Predictive innovation / surprise
+
+Compare predicted current evidence with actual current evidence:
+
+```text
+epsilon = observed - predicted
+```
+
+Candidate normalized surprise:
+
+```text
+S = epsilon^T Sigma^-1 epsilon
+```
+
+or a cheaper calibrated approximation.
+
+Small innovation should permit reuse/cheap verification; large innovation should request more evidence. The exact statistic is not frozen until benchmarked.
+
+## 10. Scheduler
+
+Candidate priority inputs:
+
+- surprise / temporal change;
+- range uncertainty;
+- depth edge / local curvature;
 - newly visible region;
 - stale age;
-- near-range or closing/TTC priority;
+- near-range / TTC priority;
 - pair disagreement;
-- static geometry/Fisher information.
+- static geometry/information quality.
 
-The scheduler controls multiple compute dimensions:
-
-`N_active_rays × N_candidates × N_pairs × N_signal_bands_or_channels`.
-
-The objective is low average work under a hard P95 latency budget.
-
-## 11. Adaptive spatial resolution
-
-An AMR-like strategy may be used to allocate more anchors/rays to uncertain, changing or discontinuous regions and fewer to smooth stable regions.
-
-This is a numerical-compute strategy only. NADIR does **not** solve Navier-Stokes, infer aerodynamic flow fields or require CFD inside the depth core.
-
-Background compression must not mean deleting all context. Stable planes/surfaces can be represented sparsely while near objects, boundaries and changing regions remain dense enough for reliable range estimation.
-
-## 12. Three-camera pair strategy
-
-The physical camera pairs are:
-
-`01`, `02`, `12`.
-
-Do not evaluate all three at full cost by default.
-
-For each ray/region:
-
-1. pre-rank pair quality from geometry/visibility/static quality;
-2. evaluate the best pair;
-3. early-exit if confidence is sufficient;
-4. query a second pair if ambiguous;
-5. use the third pair as fallback/consistency evidence when required.
-
-Pair disagreement may be fused by robust statistics or information weighting. A two-agree/one-disagrees pattern is a natural candidate for view peeling, but disagreement may also arise from occlusion/different visible surfaces and must not be blindly classified as an outlier.
-
-## 13. Uncertainty as a compute-control signal
-
-A local measurement should ideally produce
-
-`range, sigma_range, status`.
-
-Uncertainty is then used in later frames:
+The scheduler controls:
 
 ```text
-low sigma + low innovation -> reuse or cheap check
-sigma increased -> refresh
-pair disagreement -> increase evidence budget
-all evidence weak -> UNKNOWN
+N_active_rays
+x N_search_candidates
+x N_camera_pairs
+x N_signal_bands_or_feature_channels
 ```
 
-Analytic measurement-noise estimates are useful for deterministic DSP matchers, but model mismatch must be characterized separately. Theoretical covariance alone is not sufficient evidence.
+It is constrained by a hard per-frame deadline rather than maximum-detail reconstruction.
 
-## 14. Bootstrap, steady state and rebootstrap
+## 11. Progressive model complexity
+
+```text
+LEVEL 0  temporal reuse
+LEVEL 1  cheap consistency / Census-Hamming
+LEVEL 2  low-order / low-band spherical DSP
+LEVEL 3  fuller DSP refinement or second pair
+LEVEL 4  tiny learned fallback if justified
+```
+
+Runtime should stop at the lowest level that gives sufficient confidence.
+
+## 12. Candidate local measurement engines
+
+### Census / Hamming
+
+Cheap binary local descriptor and XOR/popcount-style comparison.
+
+### Local spherical DSP
+
+Active-anchor harmonic/Fourier-Bessel representation `W_mn` with candidate advantages:
+
+- native sphere, no panorama;
+- analytic gauge rotation;
+- progressive bands;
+- coarse-to-fine refinement;
+- analytic measurement-noise model;
+- explicit rejection.
+
+Do not assume full high-order/high-band evaluation for every ray.
+
+### Tiny learned residual/feature
+
+Only if it improves the latency/robustness Pareto frontier. Preferred roles are unresolved visual representation, model-mismatch correction or uncertainty calibration.
+
+## 13. Search coordinate
+
+Benchmark:
+
+```text
+direct radial depth
+inverse depth
+lambda = B_ij / d
+```
+
+For the lambda candidate:
+
+```text
+q_j(lambda) = normalize(R_ji q_i + lambda * t_hat_ji)
+J_lambda = d q_j / d lambda
+```
+
+Potential uses:
+
+- adaptive candidate spacing;
+- local refinement;
+- pair conditioning;
+- Fisher/information-style scoring;
+- deciding whether more refinement is worth latency.
+
+## 14. Three-camera pair strategy
+
+Pairs: `01`, `02`, `12`.
+
+Default candidate policy:
+
+```text
+best pair first
+-> early exit if sufficient
+-> second pair if ambiguous
+-> third pair only as fallback / consistency evidence
+```
+
+Pair disagreement can indicate occlusion or different visible surfaces; peeling is not automatic.
+
+## 15. Belief and uncertainty
+
+A measurement should return:
+
+```text
+range
+sigma_sensor
+sigma_model
+status
+source/provenance
+```
+
+Uncertainty controls future compute. Theoretical measurement covariance must be calibrated against real residuals; model mismatch is tracked separately.
+
+## 16. Multi-timescale memory
+
+### Sensory
+
+Fixed-size recent-frame/IMU ring buffer.
+
+### Working range
+
+Typed range states for prediction and local correction.
+
+### Persistent spatial support
+
+Optional sparse points/surfels/lightweight voxel-hash for stable geometry reuse. This is internal depth support, not a requirement to become a full mapping product.
+
+## 17. Adaptive spatial resolution
+
+AMR-like principle only:
+
+```text
+stable/smooth/high-confidence -> coarse or reuse
+changing/edge/uncertain/new   -> refine
+```
+
+NADIR does not solve Navier-Stokes and does not infer aerodynamic flow inside the depth core.
+
+## 18. Fail-closed behavior
+
+```text
+UNKNOWN > fabricated depth
+```
+
+Candidate triggers:
+
+- low evidence;
+- stale history;
+- unsupported camera region;
+- pair disagreement without resolution;
+- search rail;
+- pose jump;
+- RTK degradation;
+- excessive model residual;
+- out-of-support condition.
+
+## 19. Bootstrap / track / rebootstrap
 
 ### BOOTSTRAP
 
-Use wider spatial coverage and broader search to initialize scene/range memory. This path may be slower than steady state but must still be bounded and profiled.
+Broad coverage/search to initialize range state.
 
 ### TRACK / UPDATE
 
-Use history, narrow search ranges, active-anchor selection, best-pair-first evaluation and early exit.
+Prediction first, active regions only, narrow search, best-pair-first, progressive evidence, early exit.
 
 ### REBOOTSTRAP
 
-Trigger when coverage/confidence collapses, pose jumps, image/scene change is large, too many regions become dynamic or stale uncertainty exceeds a threshold.
+Trigger on confidence collapse, scene transition, pose discontinuity, excessive dynamics, stale uncertainty or repeated disagreement.
 
-## 15. Camera-quality characterization
+## 20. Optional offline compression
 
-The claim that fisheye information necessarily decreases monotonically toward the edge is not accepted as a prior fact.
+After enough runtime logs exist, learned quality/uncertainty/scheduler residuals may be tested for replacement by simpler identified/symbolic equations.
 
-NADIR-CQ should measure versus angular position:
+Promotion requires equal-or-better robustness, lower runtime cost and explicit validity-region evidence.
 
-- calibration residual;
-- local sharpness/MTF proxy;
-- contrast/SNR;
-- vignetting/exposure clipping;
-- feature repeatability;
-- stereo correspondence quality.
+This is a late optional stage, not part of Gate A.
 
-Only measured evidence may justify edge weighting.
+## 21. Runtime acceptance
 
-## 16. Runtime acceptance
+Engineering targets:
 
-Current engineering targets:
+- hard: `>=15 FPS`, P95 `<80 ms`;
+- design: `>=20 FPS`, P95 `<60 ms`;
+- stretch: `30 FPS`.
 
-- hard: >= 15 FPS and P95 capture-to-depth < 80 ms;
-- design: >= 20 FPS and P95 < 60 ms;
-- stretch: 30 FPS.
-
-Every post-Gate-A experiment should report at least:
+Mandatory downstream metrics include:
 
 ```text
-P50 total latency
-P95 total latency
+P50/P95 latency
 FPS
-peak memory
+peak RAM
 active-ray fraction
-mean candidates per active ray
-mean evaluated pairs per active ray
-mean signal bands/channels used
-bootstrap latency
-steady-state latency
+candidates per active ray
+pairs per active ray
+signal bands/channels
+history-reuse fraction
+progressive-level distribution
+bootstrap/steady-state latency
+rebootstrap frequency
 catastrophic-range-error rate
 near/new-structure recall
 coarse range error
+UNKNOWN/abstention rate
 ```
 
-Reducing a local operation count is not enough if end-to-end P95 latency does not materially improve.
-
-## 17. Research ordering
-
-The architecture should be validated in stages:
+## 22. Scientific gate order
 
 ```text
-Gate A  real native-fisheye geometry feasibility
-Gate B  local matcher benchmark: ORB/Census vs spherical DSP vs tiny learned feature
-Gate C  lambda/Jacobian/information-driven search
-Gate D  best-pair-first + 3-pair consensus
-Gate E  temporal reuse with previous range + pose
-Gate F  adaptive spatial/event-triggered scheduling
-Gate G  IMU then RTK covariance-conditioned search compression
-Gate H  QCS8550/QNN/accelerator profiling
+A  real 3-camera native-fisheye metric geometry
+B  local matcher benchmark
+C  search coordinate / Jacobian / information allocation
+D  best-pair-first + 3-camera consensus
+E  typed temporal state + geometric prediction
+F  predictive surprise + progressive compute
+G  adaptive spatial scheduling
+H  IMU search compression
+I  RTK covariance-conditioned search compression
+J  learned residual only if needed
+K  QCS8550 deployment
+L  optional offline equation/parameter compression
 ```
 
-`docs/LATENCY_FIRST_ARCHITECTURE.md` contains the detailed downstream hypothesis. `docs/VALIDATION_STATUS.md` remains authoritative for what is actually proven.
+No gate is promoted because it is elegant; it is promoted only by measured evidence.
