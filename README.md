@@ -2,11 +2,32 @@
 
 ## NADIR — Native-fisheye Adaptive Depth Inference from Rig
 
-NADIR is a research project targeting a **metric radial depth map** from a synchronized downward-facing multi-fisheye UAV rig.
+NADIR is a research project targeting a **fast metric radial-range estimate** from a synchronized downward-facing multi-fisheye UAV rig.
 
 > **Current scientific status: `GATE_A_NOT_YET_PROVEN`.**
 >
 > The repository contains geometry/data tooling and experimental baselines, but it does **not** yet demonstrate that the final 3 × 225° NADIR depth pipeline works. The active task is real-data feasibility and geometry identification. See `docs/VALIDATION_STATUS.md`.
+
+## Research priority
+
+NADIR is now explicitly **latency-first**:
+
+```text
+1. P95 latency
+2. robustness / catastrophic-error avoidance
+3. coarse metric-range accuracy
+4. fine depth accuracy
+```
+
+The intended output does not require absolute sub-centimeter reconstruction. It must estimate useful approximate range quickly and avoid catastrophic near/far mistakes. Accuracy improvements that materially worsen P95 latency are rejected unless they run only on a bootstrap/background path.
+
+Current engineering targets remain:
+
+- hard target: >= 15 FPS and P95 capture-to-depth < 80 ms;
+- design target: >= 20 FPS and P95 < 60 ms;
+- stretch target: 30 FPS.
+
+These are targets, not measured QCS8550 claims.
 
 ## Target sensing stack
 
@@ -18,12 +39,18 @@ NADIR is a research project targeting a **metric radial depth map** from a synch
 + optional barometer prior
                     │
                     ▼
-          metric radial depth map
+       metric radial range + confidence
 ```
 
-This is the **target**, not the current validated implementation. The present Gate A scope uses camera geometry and real/released stereo evidence only; IMU/RTK and learned dense inference are downstream hypotheses.
+This is the **target**, not the current validated implementation. The present Gate A scope uses camera geometry and real/released stereo evidence only; IMU/RTK and adaptive temporal inference are downstream hypotheses.
 
-The project is limited to depth generation. Landing, obstacle avoidance, semantic hazard reasoning, mapping and control are outside NADIR-Core.
+The project is limited to depth/range generation. Landing, obstacle avoidance, semantic hazard reasoning, mapping and control are outside NADIR-Core.
+
+## Non-negotiable geometry rule
+
+**Do not flatten, stitch or globally rectify the three fisheye images before stereo.**
+
+The three native fisheye views remain separate because their physical camera-center offsets/parallax are the metric depth evidence. Downstream code may use calibrated ray lookup tables, spherical/local signal representations or common output rays, but not a panorama that collapses the rig into one virtual optical center.
 
 ## Current task — Gate A
 
@@ -65,6 +92,7 @@ Most current implementation is in the first two categories. Real-data Gate A evi
    `P_i = O_R + rho_i * r_i`, with `||r_i|| = 1`.
 
 5. **Body/Rig depth geometry is distinct from later navigation state.** FRD is the intended body/rig convention; NED is reserved for navigation-state fusion when motion priors are introduced later.
+6. A calibrated per-camera `RayLUT` may cache native ray direction, solid angle, validity and later measured quality metadata, but it must preserve camera identity.
 
 ## What is implemented now
 
@@ -106,58 +134,116 @@ error vs incidence angle / baseline geometry
 owner review of Gate A evidence
 ```
 
-Only after Gate A is accepted should dense classical MVS and learned feature matching be promoted.
+Only after Gate A is accepted should downstream local matchers, temporal reuse and adaptive scheduling be promoted.
 
-## Target architecture hypothesis — not accepted yet
+## Post-Gate-A architecture hypothesis — latency-first
 
-The longer-term hypothesis remains:
+The current research direction is **not** “run a full dense network every frame.” It is:
 
 ```text
-C0 fisheye ─┐
-C1 fisheye ─┼─► shared lightweight encoder ───────────┐
-C2 fisheye ─┘                                         │
-                                                      │
-Calibration ─► ray geometry ─► visibility/quality ────┤
-                                                      │
-Previous depth ─┐                                     │
-IMU ────────────┼─► navigation state ─► relative SE(3)┤
-RTK/GNSS ───────┘                                     │
-                                                      ▼
-                                        adaptive radial hypotheses
-                                                      │
-                                                      ▼
-                                         native-fisheye MVS
-                                                      │
-                                                      ▼
-                                            metric radial depth
+3 native fisheye
+      ↓
+RayLUT / geometry / visibility
+      ↓
+previous range + uncertainty + IMU/RTK pose prior
+      ↓
+adaptive compute scheduler
+      ↓
+active anchors only
+      ↓
+best camera pair first
+      ↓
+local low-cost matcher
+  (Census/Hamming OR spherical DSP OR tiny learned feature)
+      ↓
+local lambda/depth refinement
+      ↓
+second/third pair only if needed
+      ↓
+robust consensus / confidence
+      ↓
+persistent sparse range memory
 ```
 
-Every block in this diagram after Gate A is a research hypothesis until measured and promoted.
+The scheduler asks three questions before expensive matching:
+
+```text
+WHEN must this region be recomputed?
+WHERE should compute be spent?
+HOW MUCH evidence is enough before stopping?
+```
+
+The intended steady-state behavior is prediction → verification → local correction, rather than full-search-from-scratch every frame.
+
+See `docs/LATENCY_FIRST_ARCHITECTURE.md` for the detailed hypothesis.
+
+## DSP/ray-domain matcher direction
+
+A reviewed native-spherical DSP matcher suggests several useful hypotheses for NADIR:
+
+- calibrated `pixel -> unit ray + solid angle` lookup;
+- local spherical harmonic/Fourier-Bessel signal instead of flattening the fisheye image;
+- pairwise search using `lambda = B / d`;
+- Jacobian-driven search spacing/refinement;
+- progressive frequency-band loading;
+- analytic measurement-noise propagation;
+- explicit early rejection rather than inventing a depth value.
+
+These ideas are **not yet NADIR evidence**. They become candidate local measurement engines to benchmark against Census/Hamming and a tiny learned feature matcher.
+
+## Temporal/adaptive compute hypothesis
+
+After a trustworthy range estimate exists, later frames should propagate it using relative SE(3) and uncertainty. Stable regions may be reused or cheaply checked, while new, stale, uncertain, near or discontinuous regions receive more rays/candidates/pairs.
+
+Compute therefore becomes adaptive in roughly four dimensions:
+
+```text
+N_active_rays
+× N_depth_or_lambda_candidates
+× N_camera_pairs
+× N_signal_bands_or_feature_channels
+```
+
+The goal is to reduce average work while maintaining a hard tail-latency budget. An AMR-like idea may be used only as an **adaptive spatial-resolution strategy**; NADIR does not solve Navier-Stokes or perform aerodynamic CFD inside the depth pipeline.
 
 ## Future modules
 
-- **NADIR-PERF** — latency/FPS/memory instrumentation.
+- **NADIR-PERF** — P50/P95 latency, FPS, memory and active-compute instrumentation.
 - **NADIR-CAL** — target 225° calibration characterization.
-- **NADIR-RAY** — common lower-hemisphere ray representation.
+- **NADIR-RAY** — native per-pixel rays and common lower-hemisphere representation.
 - **NADIR-VIS** — overlap, baseline and triangulation observability.
 - **NADIR-CQ / QMAP** — measured camera-quality characterization, not assumed radial edge degradation.
 - **NADIR-TRI** — classical generalized-camera triangulation; currently the active Gate A core.
-- **NADIR-LUT** — fixed-rig projection/sampling tables; currently tooling only.
-- **NADIR-MVS** — dense native-fisheye MVS candidate; frozen until Gate A review.
-- **NADIR-GI** — geometry-informed candidate selection; future hypothesis.
-- **NADIR-MOTION** — IMU-conditioned temporal prior; future hypothesis.
-- **NADIR-RTK** — RTK/GNSS-conditioned temporal baseline; future hypothesis.
-- **NADIR-EDGE** — QCS8550/QNN deployment; future hypothesis.
+- **NADIR-LUT** — fixed-rig projection/ray/solid-angle/visibility tables.
+- **NADIR-DSP** — local spherical/Census measurement-engine candidates; future hypothesis.
+- **NADIR-SCHED** — latency-budgeted active-ray/pair/search-band scheduler; future hypothesis.
+- **NADIR-MEM** — persistent depth/range + uncertainty + age/history state; future hypothesis.
+- **NADIR-MOTION** — IMU-conditioned temporal propagation; future hypothesis.
+- **NADIR-RTK** — RTK/GNSS-conditioned metric temporal baseline; future hypothesis.
+- **NADIR-MVS** — compact learned feature matcher only if it beats deterministic baselines on the Pareto frontier.
+- **NADIR-EDGE** — QCS8550/QNN/accelerator profiling; future hypothesis.
 
-## Runtime targets — not measured claims
+## Runtime evaluation contract
 
-Future deployment acceptance goals are:
+Every later module must report at least:
 
-- hard target: >= 15 FPS and P95 capture-to-depth < 80 ms;
-- design target: >= 20 FPS and P95 < 60 ms;
-- stretch target: 30 FPS.
+```text
+P50 total latency
+P95 total latency
+FPS
+peak memory
+active-ray fraction
+mean candidates per active ray
+mean evaluated camera pairs per active ray
+mean signal bands/channels used
+bootstrap latency
+steady-state latency
+catastrophic-range-error rate
+near/new-structure recall
+coarse range error
+```
 
-These are engineering targets only. No QCS8550/QNN measurement has been produced yet.
+Reducing ray count alone is not success if P95 latency does not materially improve.
 
 ## Dataset strategy
 
@@ -176,6 +262,8 @@ A result on 195° data must never be promoted as proof for the 225° extreme ann
 
 ## Immediate next milestone
 
+The architecture has been expanded on paper, but the execution boundary has **not** moved past Gate A:
+
 1. pull this repository to the Ubuntu machine;
 2. keep downloaded MVS-GI/sample artifacts under `/media/nahhao74/KINGSTON`;
 3. inspect one actual released sample;
@@ -184,4 +272,4 @@ A result on 195° data must never be promoted as proof for the 225° extreme ann
 6. freeze any acceptance/filter criteria only after seeing the evidence;
 7. decide whether Gate A is supported, unsupported or still underidentified.
 
-See `DEVELOPMENT.md` and `docs/VALIDATION_STATUS.md` for the authoritative current boundary.
+See `DEVELOPMENT.md`, `docs/VALIDATION_STATUS.md`, and `docs/LATENCY_FIRST_ARCHITECTURE.md` for the authoritative current boundary and downstream research direction.
