@@ -1,10 +1,10 @@
-# NADIR Implementation Plan v1.0
+# NADIR Implementation Plan v1.1
 
 ## 1. Guiding rule
 
 The current scientific task remains **Gate A real-data geometry feasibility**. Downstream architecture work is documented as hypothesis only until Gate A is reviewed.
 
-The canonical downstream design is `FINAL_RESEARCH_ARCHITECTURE.md`.
+The canonical downstream design is `FINAL_RESEARCH_ARCHITECTURE.md`. The latest concise snapshot is `CURRENT_PIPELINE_STATUS.md`. The radial-range-to-point-cloud contract is defined separately in `POINTCLOUD_OUTPUT.md`.
 
 After Gate A, implementation is latency-first:
 
@@ -78,6 +78,7 @@ candidate_generation_ms
 matching_ms
 pair_consensus_ms
 belief_update_ms
+pointcloud_ms              # only when point-cloud adapter enabled
 memory_update_ms
 total_ms
 fps
@@ -94,6 +95,8 @@ mean_signal_bands_or_channels
 fraction_reusing_history
 fraction_reaching_each_compute_level
 bootstrap_or_track_mode
+pointcloud_valid_count      # when enabled
+pointcloud_density_summary  # when enabled
 ```
 
 Reports must include P50/P95 latency, not only mean FPS.
@@ -321,6 +324,37 @@ optional persistent sparse spatial support
 
 Compare sparse points, surfels and lightweight voxel/hash storage only if needed. Avoid turning NADIR into a general mapping system.
 
+### M12.5 — NADIR-CLOUD
+
+Implement the deterministic radial-range-to-point output adapter only after a trustworthy typed range state exists.
+
+Canonical relation:
+
+```text
+P_i = O_R + rho_i * r_i
+```
+
+If output is required in world/NED coordinates:
+
+```text
+P_i^N = R_NB * P_i^B + p_B^N
+```
+
+Required tests:
+
+- rig/body coordinate-frame correctness;
+- NED transform correctness with timestamp-consistent pose;
+- invalid/`UNKNOWN` range suppression or explicit status handling;
+- uncertainty propagation sanity;
+- current cloud composed from propagated valid history + fresh corrections;
+- conversion latency and emitted valid-point count;
+- memory/runtime of optional point/surfel/voxel support;
+- failure under pose error and dynamic objects.
+
+The adapter is an output/spatial-memory representation, **not** a new depth estimator and not a separate reason to move the scientific boundary past Gate A.
+
+Heavy operations such as ICP, global registration, dense meshing or generic point-cloud SLAM are outside the default fast path unless separately justified.
+
 ### M13 — NADIR-IMU
 
 Add IMU only after camera/history temporal geometry works.
@@ -369,7 +403,8 @@ Potential accelerated pieces:
 - Census/Hamming;
 - vectorized spherical signal operations;
 - compact learned blocks if retained;
-- pair consensus / belief update.
+- pair consensus / belief update;
+- range-to-point conversion if enabled.
 
 For learned components only:
 
@@ -432,6 +467,8 @@ UNKNOWN > fabricated range
 
 Track abstention rate explicitly. A system that is fast only because it silently emits bad depth is rejected.
 
+Point-cloud output must not silently convert `UNKNOWN` or invalid range states into plausible-looking XYZ points.
+
 ## 7. Acceptance metrics
 
 Every post-Gate-A experiment should report at least:
@@ -456,6 +493,15 @@ coarse range error
 UNKNOWN/abstention rate
 ```
 
+When point-cloud output is enabled, additionally report:
+
+```text
+pointcloud_ms
+valid_point_count / density summary
+pointcloud memory
+persistent-fusion time/memory if enabled
+```
+
 Fine MAE/RMSE/AbsRel may still be reported for diagnosis, but they do not dominate latency-first decisions.
 
 ## 8. Immediate work order
@@ -466,4 +512,5 @@ The design is frozen on paper, but execution remains conservative:
 2. run the current Gate A sparse geometry harness without optional filters;
 3. understand geometry/GT residuals and freeze Gate A interpretation;
 4. only after Gate A review, implement M0 profiling and the M4 matcher benchmark rather than jumping to a dense CNN;
-5. keep `FINAL_RESEARCH_ARCHITECTURE.md` as the canonical downstream design reference.
+5. implement the point-cloud adapter only after trustworthy range state exists; it is not a substitute for validating the depth geometry;
+6. keep `FINAL_RESEARCH_ARCHITECTURE.md`, `CURRENT_PIPELINE_STATUS.md`, and `POINTCLOUD_OUTPUT.md` as the downstream design references.
