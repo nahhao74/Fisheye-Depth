@@ -1,12 +1,14 @@
-# NADIR Development Baseline v0.6 — Gate A + Canonical Latency-First Architecture
+# NADIR Development Baseline v0.7 — Gate A + Canonical Latency-First Architecture + Point-Cloud Output
 
 The repository contains substantial geometry/tooling code, but the **scientific pipeline is not yet proven**. Current execution remains intentionally bounded to **Gate A: real-data feasibility and geometry identification for synchronized three-fisheye metric stereo**.
 
-The downstream research architecture is now frozen on paper as a latency-first, history-aware, uncertainty-driven design with typed temporal state and progressive computation. This does **not** move the current validation boundary.
+The downstream research architecture is frozen on paper as a latency-first, history-aware, uncertainty-driven design with typed temporal state and progressive computation. The latest design addition is a deterministic radial-range-to-point-cloud output contract. This does **not** move the current validation boundary.
 
 Canonical references:
 
 - `docs/FINAL_RESEARCH_ARCHITECTURE.md` — final research architecture hypothesis;
+- `docs/CURRENT_PIPELINE_STATUS.md` — latest concise pipeline/status snapshot;
+- `docs/POINTCLOUD_OUTPUT.md` — radial-range to point-cloud/spatial-output contract;
 - `docs/VALIDATION_STATUS.md` — authoritative scientific status;
 - `docs/IMPLEMENTATION_PLAN.md` — staged implementation/benchmark sequence;
 - `docs/LATENCY_FIRST_ARCHITECTURE.md` — earlier latency-first design rationale retained for context.
@@ -24,6 +26,8 @@ Canonical references:
 - unit tests + GitHub Actions regression checks.
 
 These code blocks are tooling/prototypes. They do **not** by themselves establish real 3-camera metric range performance.
+
+The point-cloud output adapter is currently a **design contract**, not an implemented/benchmarked runtime block.
 
 ## Current scientific task
 
@@ -94,12 +98,37 @@ The expected downstream structure combines:
 - local deterministic DSP before learned fallback;
 - explicit sensor/model uncertainty;
 - multi-timescale range/spatial memory;
+- optional radial-range-to-point-cloud output/spatial representation;
 - fail-closed `UNKNOWN` behavior;
 - bounded bootstrap/track/rebootstrap state machine.
 
 Selected LAWGRAPH ideas are used only as architecture principles useful to depth: equation-first geometry, typed state, predictive coding, event-driven compute, progressive complexity, multi-timescale memory, learned residuals only for unresolved structure, and optional later equation/parameter compression.
 
 NADIR does **not** become a general world model, controller, planner, CFD solver or Navier-Stokes simulator.
+
+## Latest point-cloud output decision
+
+A valid radial-range state maps directly to a 3-D point:
+
+```text
+P_i = O_R + rho_i * r_i
+```
+
+where `r_i` is a unit rig/output ray.
+
+The point-cloud path sits **after belief update** and does not replace the canonical range state. It can expose:
+
+```text
+current adaptive cloud
+working recent cloud
+optional persistent point/surfel/voxel support
+```
+
+The current cloud may contain both propagated valid history and freshly measured corrections. Stable/far regions may remain sparse while near/new/boundary regions are denser.
+
+Heavy cloud operations such as ICP, meshing, clustering or dense voxel fusion are not part of the default NADIR fast path.
+
+See `docs/POINTCLOUD_OUTPUT.md`.
 
 ## Frozen downstream hypotheses
 
@@ -116,6 +145,7 @@ The following remain **not accepted milestones** before Gate A owner review:
 - progressive matcher complexity;
 - persistent/multi-timescale range memory;
 - adaptive active-ray/AMR-like scheduling;
+- radial-range to point-cloud output adapter and persistent cloud/surfel fusion;
 - learned residual/uncertainty correction;
 - IMU/RTK temporal priors;
 - optional symbolic/parameter compression;
@@ -132,6 +162,8 @@ The existing dense photometric code remains `HYPOTHESIS_NOT_VALIDATED`; it shoul
 - Sparse triangulation uses distinct physical camera centers; cameras are never collapsed to a single optical center.
 - Fisheye RGB is not flattened/panoramically stitched before stereo.
 - Final depth/range semantics remain radial range from the chosen rig reference origin.
+- A valid rig-frame range state may be converted to a point by `P = O_R + rho r`.
+- A world/NED point may later be formed by `P^N = R_NB P^B + p_B^N` with timestamp-consistent pose/covariance.
 
 ## Runtime contract for later stages
 
@@ -143,6 +175,8 @@ Current engineering targets, not measured claims:
 
 Later experiments must report P50/P95 latency, active-ray fraction, candidates per active ray, evaluated pairs per active ray, signal bands/channels, history-reuse fraction, progressive-level distribution, bootstrap vs steady-state latency, rebootstrap frequency, catastrophic-range-error rate, near/new-structure recall and `UNKNOWN`/abstention rate.
 
+If the point-cloud adapter is enabled, report its conversion time, emitted-point count/density and persistent-fusion memory/runtime separately.
+
 ## Current validation level
 
 - source semantics: substantially audited;
@@ -151,6 +185,7 @@ Later experiments must report P50/P95 latency, active-ray fraction, candidates p
 - exact 225° real evidence: **not available**;
 - matcher benchmark: **not measured**;
 - typed history / predictive surprise / scheduler benefit: **not measured**;
+- point-cloud adapter/persistent cloud runtime: **not measured**;
 - IMU/RTK compute reduction: **not measured**;
 - learned residual benefit: **not measured**;
 - QCS8550 latency/FPS: **not measured**.
