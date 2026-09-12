@@ -12,7 +12,7 @@ The scientific question is whether known camera models + known camera-center bas
 
 Until Gate A is reviewed and accepted, downstream adaptive/DSP/temporal/learned architecture is not promoted.
 
-`FINAL_RESEARCH_ARCHITECTURE.md` is the canonical design document. This file remains authoritative for **what has actually been proven**.
+`FINAL_RESEARCH_ARCHITECTURE.md` is the canonical design document. `CURRENT_PIPELINE_STATUS.md` is the latest concise status snapshot. This file remains authoritative for **what has actually been proven**.
 
 ## Status vocabulary
 
@@ -46,6 +46,8 @@ Until Gate A is reviewed and accepted, downstream adaptive/DSP/temporal/learned 
 | Persistent temporal range/uncertainty memory | `HYPOTHESIS_NOT_VALIDATED` | Candidate steady-state compute reduction mechanism. |
 | Multi-timescale sensory/working/spatial memory | `HYPOTHESIS_NOT_VALIDATED` | Candidate bounded-memory organization; no runtime evidence yet. |
 | Adaptive active-ray / AMR-like scheduler | `HYPOTHESIS_NOT_VALIDATED` | Numerical compute-allocation analogy only; no Navier-Stokes/CFD solver is proposed. |
+| Radial-range -> point-cloud output adapter | `HYPOTHESIS_NOT_VALIDATED` | Deterministic contract `P = O_R + rho r` is defined, but adapter/runtime overhead/frame transforms/persistent fusion are not implemented or measured. |
+| Persistent point/surfel/voxel spatial support | `HYPOTHESIS_NOT_VALIDATED` | Optional downstream memory/output representation only; not a requirement to turn NADIR into SLAM/mapping. |
 | Learned residual/uncertainty correction | `HYPOTHESIS_NOT_VALIDATED` | Candidate role for a small network after deterministic structure; not an accepted direct-depth model. |
 | Offline parameter/symbolic compression | `HYPOTHESIS_NOT_VALIDATED` | Late optional idea to replace learned quality/scheduler residuals with compact validated equations; not current scope. |
 | Learned CNN/groupwise MVS | `HYPOTHESIS_NOT_VALIDATED` | Candidate only if deterministic baselines are insufficient on the latency/robustness Pareto frontier. |
@@ -121,6 +123,18 @@ predict
 
 Candidate downstream work must be evaluated as a falsification sequence, not promoted from design discussion alone.
 
+## Point-cloud output boundary
+
+The latest output decision is that a valid radial-range state can be converted to a 3-D point by:
+
+```text
+P_i = O_R + rho_i * r_i
+```
+
+This conversion is an output/spatial-memory representation after the belief update; it is **not** a new depth estimator and it does not move the Gate A boundary.
+
+Before promotion, the point-cloud path must verify coordinate-frame correctness, timestamp/pose alignment, `UNKNOWN` handling, uncertainty propagation, conversion latency and persistent-fusion failure modes. See `POINTCLOUD_OUTPUT.md`.
+
 ## Explicitly out of scope until Gate A review
 
 Do not promote or optimize as accepted pipeline blocks:
@@ -133,6 +147,7 @@ Do not promote or optimize as accepted pipeline blocks:
 - progressive matcher complexity;
 - persistent/multi-timescale range memory;
 - adaptive active-ray/event-triggered scheduling;
+- point-cloud adapter or persistent point/surfel/voxel fusion as an accepted runtime block;
 - learned residual/quality/uncertainty modules;
 - CNN/ResNet/attention feature encoders;
 - IMU/RTK temporal fusion;
@@ -166,6 +181,8 @@ near/new-structure recall
 coarse range error
 UNKNOWN/abstention rate
 ```
+
+When the point-cloud adapter is enabled, additionally report its conversion time, emitted valid-point count/density, and any persistent-fusion memory/runtime cost separately so downstream cloud processing cannot hide inside the depth latency budget.
 
 Fine MAE/RMSE/AbsRel may still be diagnostic metrics, but they do not override latency-first decisions.
 
