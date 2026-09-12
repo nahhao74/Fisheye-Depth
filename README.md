@@ -8,9 +8,11 @@ NADIR is a research project targeting **fast approximate metric radial range + c
 >
 > The repository contains geometry/data tooling and experimental baselines, but it does **not** yet demonstrate that the final `3 × ~225°` NADIR pipeline works. The active task remains real-data feasibility and geometry identification. See `docs/VALIDATION_STATUS.md`.
 
-The canonical downstream design is now:
+The current design/status references are:
 
-- `docs/FINAL_RESEARCH_ARCHITECTURE.md` — full final research architecture;
+- `docs/FINAL_RESEARCH_ARCHITECTURE.md` — canonical full research architecture;
+- `docs/CURRENT_PIPELINE_STATUS.md` — latest concise pipeline/status snapshot;
+- `docs/POINTCLOUD_OUTPUT.md` — radial-range to point-cloud/spatial-output contract;
 - `docs/LATENCY_FIRST_ARCHITECTURE.md` — latency-first design rationale;
 - `docs/IMPLEMENTATION_PLAN.md` — staged implementation/benchmark plan;
 - `docs/VALIDATION_STATUS.md` — authoritative statement of what is actually proven.
@@ -48,6 +50,7 @@ These are targets, not measured QCS8550 claims.
                     v
        approximate metric radial range
                 + confidence
+                + optional adaptive point cloud
 ```
 
 This is the target architecture, not the current validated implementation.
@@ -63,6 +66,8 @@ Output semantics are radial range from a selected rig reference origin:
 ```text
 P_i = O_R + rho_i r_i,   ||r_i|| = 1
 ```
+
+The same relation also defines the optional range-to-point output adapter once a valid range state exists.
 
 Navigation/global state uses NED; rig/body uses FRD; camera frames remain native.
 
@@ -110,6 +115,8 @@ Code existence does not imply empirical validation.
 - older dense photometric sphere-sweep prototype retained as `HYPOTHESIS_NOT_VALIDATED`;
 - unit tests and GitHub Actions CI.
 
+The point-cloud output path is documented but is **not yet an implemented/benchmarked accepted runtime block**.
+
 ## Final research architecture — hypothesis only
 
 After Gate A, the current final design direction combines selected ideas from the reviewed spherical DSP matcher and the LAWGRAPH research concept, but only where they directly help depth/range inference.
@@ -137,6 +144,9 @@ L5  Three-camera pair manager
 L6  Belief update
     range + sensor uncertainty + model uncertainty + status
                          |
+     optional range-to-point adapter
+     P = O_R + rho r
+                         |
 L7  Multi-timescale memory
     sensory buffer + working range memory + persistent spatial state
                          |
@@ -145,6 +155,42 @@ L8  Runtime assurance / rebootstrap
 ```
 
 The expensive matcher is only one layer. The main architectural objective is to **avoid unnecessary matching**.
+
+## Latest point-cloud output decision
+
+A valid radial-range state can be exposed directly as a 3-D point:
+
+```text
+P_i = O_R + rho_i * r_i
+```
+
+If the rig origin is the coordinate origin:
+
+```text
+P_i = rho_i * r_i
+```
+
+The point-cloud path is an output/spatial-memory representation after belief update, not a new depth estimator.
+
+The current cloud may combine:
+
+```text
+propagated valid history
++
+freshly measured corrections
+```
+
+and may be intentionally non-uniform:
+
+```text
+stable / far / smooth -> sparse or reused points
+near / new / boundary -> denser points
+uncertain              -> refresh or UNKNOWN
+```
+
+Optional longer-lived representations may use sparse points, surfels or a lightweight voxel/hash structure. Heavy ICP, generic point-cloud SLAM, dense meshing or other expensive cloud processing are outside the default fast path unless separately justified.
+
+See `docs/POINTCLOUD_OUTPUT.md`.
 
 ## LAWGRAPH ideas retained in NADIR
 
@@ -239,6 +285,8 @@ coarse range error
 UNKNOWN/abstention rate
 ```
 
+When point-cloud output is enabled, additionally report its conversion time, emitted valid-point count/density and any persistent-fusion memory/runtime cost separately.
+
 Reducing operation count alone is not success if P95 end-to-end latency does not materially improve.
 
 ## Research gate sequence
@@ -258,7 +306,7 @@ Gate K  QCS8550 deployment / accelerator profiling
 Gate L  optional offline equation/parameter compression
 ```
 
-See `docs/FINAL_RESEARCH_ARCHITECTURE.md` for the complete structure and `docs/VALIDATION_STATUS.md` for the authoritative current boundary.
+The point-cloud adapter is an output/integration milestone after trustworthy radial range exists; it is not a separate depth-science gate.
 
 ## Dataset strategy
 
@@ -277,7 +325,7 @@ A result on 195° data must never be promoted as proof for the 225° extreme ann
 
 ## Immediate next milestone
 
-The design is now broader on paper, but execution has **not moved past Gate A**:
+The design is broader on paper, but execution has **not moved past Gate A**:
 
 1. pull this repository to the Ubuntu machine;
 2. keep downloaded MVS-GI/sample artifacts under `/media/nahhao74/KINGSTON`;
